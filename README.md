@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/logoares.png" alt="Ares" width="800">
+  <img src="docs/assets/logoares.png" alt="Ares" width="400">
 </p>
 
 <h1 align="center">Ares</h1>
@@ -46,10 +46,9 @@ cargo build
 # Start PostgreSQL
 docker compose up -d
 
-# Set environment variables
-export ARES_API_KEY="your-api-key"
-export ARES_MODEL="gpt-4o-mini"
-export DATABASE_URL="postgresql://postgres:postgres@localhost:5432/ares"
+# Configure environment
+cp .env.example .env
+# Edit .env with your API key and settings
 
 # One-shot scrape (stdout only)
 cargo run -- scrape -u https://example.com -s schemas/blog/1.0.0.json
