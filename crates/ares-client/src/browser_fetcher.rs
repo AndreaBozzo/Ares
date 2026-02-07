@@ -119,10 +119,7 @@ impl BrowserFetcher {
             }
         }
 
-        candidates
-            .iter()
-            .map(PathBuf::from)
-            .find(|p| p.exists())
+        candidates.iter().map(PathBuf::from).find(|p| p.exists())
     }
 }
 
