@@ -5,6 +5,9 @@ edition.workspace = true
 license.workspace = true
 description = "CLI entry point for Ares AI scraper"
 
+[features]
+browser = ["ares-client/browser"]
+
 [[bin]]
 name = "ares"
 path = "src/main.rs"

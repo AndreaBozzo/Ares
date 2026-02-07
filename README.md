@@ -24,17 +24,18 @@ Conceptual sibling of [Ceres](https://github.com/AndreaBozzo/Ceres) — same phi
 ```
 ares-cli          CLI interface — arg parsing, wiring, delegation
 ares-core         Business logic — ScrapeService, WorkerService, CircuitBreaker, traits
-ares-client       External adapters — HTTP fetcher, HTML cleaner, OpenAI-compatible LLM client
+ares-client       External adapters — HTTP fetcher, headless browser fetcher, HTML cleaner, LLM client
 ares-db           PostgreSQL persistence — ExtractionRepository, ScrapeJobRepository
 ```
 
-All external dependencies are behind traits (`Fetcher`, `Cleaner`, `Extractor`, `ExtractionStore`, `ExtractorFactory`, `JobQueue`), enabling full mock-based testing.
+All external dependencies are behind traits (`Fetcher`, `Cleaner`, `Extractor`, `ExtractionStore`, `ExtractorFactory`, `JobQueue`), enabling full mock-based testing. The `Fetcher` trait has two implementations: `ReqwestFetcher` for static pages and `BrowserFetcher` (feature-gated behind `browser`) for JS-rendered SPAs.
 
 ## Prerequisites
 
 - **Rust** 1.87+ (edition 2024)
 - **Docker** (for PostgreSQL and integration tests)
 - An **OpenAI-compatible API key** (OpenAI, Gemini, or any compatible endpoint)
+- **Chromium / Chrome** (only when using `--browser` for JS-rendered pages)
 
 ## Quick Start
 
@@ -52,6 +53,9 @@ cp .env.example .env
 
 # One-shot scrape (stdout only)
 cargo run -- scrape -u https://example.com -s schemas/blog/1.0.0.json
+
+# Scrape a JS-rendered page with headless browser
+cargo run --features browser -- scrape -u https://spa-example.com -s blog@latest --browser
 
 # Scrape and persist to database
 cargo run -- scrape -u https://example.com -s blog@latest --save
@@ -81,6 +85,7 @@ One-shot extraction. Fetches the URL, cleans HTML to Markdown, sends it to the L
 | `-a, --api-key` | `ARES_API_KEY` | API key |
 | `--save` | | Persist result to database |
 | `--schema-name` | | Override schema name for storage |
+| `--browser` | | Use headless browser for JS-rendered pages (requires `browser` feature) |
 
 ### `ares history`
 
@@ -93,6 +98,13 @@ Manage persistent scrape jobs in the PostgreSQL queue.
 ### `ares worker`
 
 Start a background worker that polls the job queue, processes scrape jobs through the circuit breaker, handles retries with exponential backoff, and supports graceful shutdown via Ctrl+C.
+
+| Flag | Env Var | Description |
+|---|---|---|
+| `--worker-id` | | Custom worker ID (auto-generated if omitted) |
+| `--poll-interval` | | Seconds between job queue polls (default: 5) |
+| `-a, --api-key` | `ARES_API_KEY` | API key |
+| `--browser` | | Use headless browser for JS-rendered pages (requires `browser` feature) |
 
 ## Schemas
 
@@ -115,6 +127,7 @@ Reference by path (`schemas/blog/1.0.0.json`) or by name (`blog@1.0.0`, `blog@la
 | `ARES_MODEL` | Yes | | LLM model name |
 | `ARES_BASE_URL` | No | `https://api.openai.com/v1` | OpenAI-compatible endpoint |
 | `DATABASE_URL` | For persistence | | PostgreSQL connection string |
+| `CHROME_BIN` | No | Auto-detected | Override path to Chrome/Chromium binary |
 
 **Gemini** works via the OpenAI-compatible endpoint:
 

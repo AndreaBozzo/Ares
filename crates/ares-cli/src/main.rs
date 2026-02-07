@@ -11,6 +11,7 @@ use ares_client::{HtmdCleaner, OpenAiExtractor, OpenAiExtractorFactory, ReqwestF
 use ares_core::circuit_breaker::{CircuitBreaker, CircuitBreakerConfig};
 use ares_core::job::{CreateScrapeJobRequest, JobStatus, WorkerConfig};
 use ares_core::job_queue::JobQueue;
+use ares_core::traits::Fetcher;
 use ares_core::worker::{TracingWorkerReporter, WorkerService};
 use ares_core::{NullStore, ScrapeService};
 use ares_db::{ExtractionRepository, ScrapeJobRepository};
@@ -58,6 +59,10 @@ enum Commands {
         /// Schema name for storage/retrieval (defaults to filename without extension)
         #[arg(long)]
         schema_name: Option<String>,
+
+        /// Use headless browser for JS-rendered pages (requires `browser` feature)
+        #[arg(long, default_value_t = false)]
+        browser: bool,
     },
 
     /// Show extraction history for a URL
@@ -94,6 +99,10 @@ enum Commands {
         /// API key for LLM calls
         #[arg(short, long, env = "ARES_API_KEY")]
         api_key: String,
+
+        /// Use headless browser for JS-rendered pages (requires `browser` feature)
+        #[arg(long, default_value_t = false)]
+        browser: bool,
     },
 }
 
@@ -174,6 +183,7 @@ async fn main() -> Result<()> {
             api_key,
             save,
             schema_name,
+            browser,
         } => {
             let (schema_path, resolved_name) = resolve_schema(&schema)?;
             let schema_name = schema_name.unwrap_or(resolved_name);
@@ -184,28 +194,37 @@ async fn main() -> Result<()> {
             let schema_value: serde_json::Value =
                 serde_json::from_str(&schema_str).context("Invalid JSON in schema file")?;
 
-            let fetcher = ReqwestFetcher::new().context("Failed to create HTTP client")?;
-            let cleaner = HtmdCleaner::new();
-            let extractor = OpenAiExtractor::with_base_url(&api_key, &model, &base_url)
-                .map_err(|e| anyhow::anyhow!(e))?;
-
-            let result = if save {
-                let repo = connect_db().await?;
-                let service = ScrapeService::with_store(fetcher, cleaner, extractor, repo, model);
-                service
-                    .scrape(&url, &schema_value, &schema_name)
-                    .await
-                    .map_err(|e| anyhow::anyhow!(e))?
+            if browser {
+                let fetcher = create_browser_fetcher().await?;
+                cmd_scrape(
+                    fetcher,
+                    ScrapeOpts {
+                        url: &url,
+                        schema_value,
+                        schema_name: &schema_name,
+                        model: &model,
+                        base_url: &base_url,
+                        api_key: &api_key,
+                        save,
+                    },
+                )
+                .await?;
             } else {
-                let service =
-                    ScrapeService::with_store(fetcher, cleaner, extractor, NullStore, model);
-                service
-                    .scrape(&url, &schema_value, &schema_name)
-                    .await
-                    .map_err(|e| anyhow::anyhow!(e))?
-            };
-
-            println!("{}", serde_json::to_string_pretty(&result.extracted_data)?);
+                let fetcher = ReqwestFetcher::new().context("Failed to create HTTP client")?;
+                cmd_scrape(
+                    fetcher,
+                    ScrapeOpts {
+                        url: &url,
+                        schema_value,
+                        schema_name: &schema_name,
+                        model: &model,
+                        base_url: &base_url,
+                        api_key: &api_key,
+                        save,
+                    },
+                )
+                .await?;
+            }
         }
 
         Commands::History {
@@ -344,52 +363,141 @@ async fn main() -> Result<()> {
             worker_id,
             poll_interval,
             api_key,
+            browser,
         } => {
-            let pool = connect_pool().await?;
-            let job_repo = ScrapeJobRepository::new(pool.clone());
-            let extraction_repo = ExtractionRepository::new(pool);
-
-            let config = WorkerConfig::default()
-                .with_poll_interval(std::time::Duration::from_secs(poll_interval));
-            let config = if let Some(id) = worker_id {
-                config.with_worker_id(id)
+            if browser {
+                let fetcher = create_browser_fetcher().await?;
+                cmd_worker(fetcher, &api_key, worker_id, poll_interval).await?;
             } else {
-                config
-            };
-
-            let fetcher = ReqwestFetcher::new().context("Failed to create HTTP client")?;
-            let cleaner = HtmdCleaner::new();
-            let extractor_factory = OpenAiExtractorFactory::new(&api_key);
-            let cb = CircuitBreaker::new("llm", CircuitBreakerConfig::default());
-
-            let worker = WorkerService::new(
-                job_repo,
-                fetcher,
-                cleaner,
-                extractor_factory,
-                extraction_repo,
-                cb,
-                config,
-            );
-
-            let cancel = CancellationToken::new();
-            let token = cancel.clone();
-
-            tokio::spawn(async move {
-                tokio::signal::ctrl_c().await.ok();
-                tracing::info!("Shutdown signal received");
-                token.cancel();
-            });
-
-            worker
-                .run(cancel, &TracingWorkerReporter)
-                .await
-                .map_err(|e| anyhow::anyhow!(e))?;
+                let fetcher = ReqwestFetcher::new().context("Failed to create HTTP client")?;
+                cmd_worker(fetcher, &api_key, worker_id, poll_interval).await?;
+            }
         }
     }
 
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// Generic command handlers — pure injection, no business logic.
+// ---------------------------------------------------------------------------
+
+/// Options for a one-shot scrape — passed as a single struct to keep the
+/// generic `cmd_scrape` below the clippy argument-count threshold.
+struct ScrapeOpts<'a> {
+    url: &'a str,
+    schema_value: serde_json::Value,
+    schema_name: &'a str,
+    model: &'a str,
+    base_url: &'a str,
+    api_key: &'a str,
+    save: bool,
+}
+
+/// One-shot scrape: fetch → clean → extract → (optionally) persist.
+async fn cmd_scrape<F: Fetcher>(fetcher: F, opts: ScrapeOpts<'_>) -> Result<()> {
+    let cleaner = HtmdCleaner::new();
+    let extractor = OpenAiExtractor::with_base_url(opts.api_key, opts.model, opts.base_url)
+        .map_err(|e| anyhow::anyhow!(e))?;
+
+    let result = if opts.save {
+        let repo = connect_db().await?;
+        let service =
+            ScrapeService::with_store(fetcher, cleaner, extractor, repo, opts.model.to_string());
+        service
+            .scrape(opts.url, &opts.schema_value, opts.schema_name)
+            .await
+            .map_err(|e| anyhow::anyhow!(e))?
+    } else {
+        let service = ScrapeService::with_store(
+            fetcher,
+            cleaner,
+            extractor,
+            NullStore,
+            opts.model.to_string(),
+        );
+        service
+            .scrape(opts.url, &opts.schema_value, opts.schema_name)
+            .await
+            .map_err(|e| anyhow::anyhow!(e))?
+    };
+
+    println!("{}", serde_json::to_string_pretty(&result.extracted_data)?);
+    Ok(())
+}
+
+/// Long-running worker: poll job queue → circuit breaker → scrape → persist.
+async fn cmd_worker<F: Fetcher>(
+    fetcher: F,
+    api_key: &str,
+    worker_id: Option<String>,
+    poll_interval: u64,
+) -> Result<()> {
+    let pool = connect_pool().await?;
+    let job_repo = ScrapeJobRepository::new(pool.clone());
+    let extraction_repo = ExtractionRepository::new(pool);
+
+    let config =
+        WorkerConfig::default().with_poll_interval(std::time::Duration::from_secs(poll_interval));
+    let config = if let Some(id) = worker_id {
+        config.with_worker_id(id)
+    } else {
+        config
+    };
+
+    let cleaner = HtmdCleaner::new();
+    let extractor_factory = OpenAiExtractorFactory::new(api_key);
+    let cb = CircuitBreaker::new("llm", CircuitBreakerConfig::default());
+
+    let worker = WorkerService::new(
+        job_repo,
+        fetcher,
+        cleaner,
+        extractor_factory,
+        extraction_repo,
+        cb,
+        config,
+    );
+
+    let cancel = CancellationToken::new();
+    let token = cancel.clone();
+
+    tokio::spawn(async move {
+        tokio::signal::ctrl_c().await.ok();
+        tracing::info!("Shutdown signal received");
+        token.cancel();
+    });
+
+    worker
+        .run(cancel, &TracingWorkerReporter)
+        .await
+        .map_err(|e| anyhow::anyhow!(e))?;
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Browser fetcher factory — feature-gated.
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "browser")]
+async fn create_browser_fetcher() -> Result<ares_client::BrowserFetcher> {
+    ares_client::BrowserFetcher::new()
+        .await
+        .map_err(|e| anyhow::anyhow!(e))
+}
+
+#[cfg(not(feature = "browser"))]
+async fn create_browser_fetcher() -> Result<ReqwestFetcher> {
+    anyhow::bail!(
+        "--browser requires the `browser` feature.\n\
+         Rebuild with: cargo build --features browser"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Schema resolution & helpers.
+// ---------------------------------------------------------------------------
 
 fn resolve_schema(schema_arg: &str) -> Result<(PathBuf, String)> {
     let path_candidate = PathBuf::from(schema_arg);
