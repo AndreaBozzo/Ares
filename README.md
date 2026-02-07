@@ -8,6 +8,11 @@
   Web scraper with LLM-powered structured data extraction.
 </p>
 
+<p align="center">
+  <a href="https://github.com/AndreaBozzo/Ares/actions/workflows/ci.yml"><img src="https://github.com/AndreaBozzo/Ares/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://discord.gg/UyCzNVVk"><img src="https://img.shields.io/discord/1469399961987711161?color=5865F2&logo=discord&logoColor=white&label=Discord" alt="Discord"></a>
+</p>
+
 ---
 
 Ares fetches web pages, converts HTML to Markdown, and uses LLM APIs to extract structured data defined by JSON Schemas. It supports persistent job queues with retries, circuit breaking, change detection, and graceful worker shutdown.
