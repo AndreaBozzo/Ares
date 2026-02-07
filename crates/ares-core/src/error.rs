@@ -39,6 +39,10 @@ pub enum AppError {
     #[error("Network error: {0}")]
     NetworkError(String),
 
+    /// Database operation failed.
+    #[error("Database error: {0}")]
+    DatabaseError(String),
+
     /// Generic error.
     #[error("{0}")]
     Generic(String),

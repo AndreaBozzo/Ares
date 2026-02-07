@@ -29,6 +29,17 @@ pub struct Extraction {
     pub created_at: DateTime<Utc>,
 }
 
+/// DTO for inserting a new extraction into the database.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct NewExtraction {
+    pub url: String,
+    pub schema_name: String,
+    pub extracted_data: serde_json::Value,
+    pub raw_content_hash: String,
+    pub data_hash: String,
+    pub model: String,
+}
+
 /// Compute a SHA-256 hash of a string, returned as 64-char hex.
 pub fn compute_hash(content: &str) -> String {
     let mut hasher = Sha256::new();

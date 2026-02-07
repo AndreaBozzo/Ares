@@ -1,2 +1,3 @@
-// Ares DB - PostgreSQL repository layer
-// Will be implemented in Phase 2 (persistence)
+pub mod repository;
+
+pub use repository::ExtractionRepository;
