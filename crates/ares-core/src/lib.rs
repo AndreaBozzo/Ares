@@ -8,6 +8,9 @@ pub mod traits;
 pub mod util;
 pub mod worker;
 
+#[cfg(test)]
+pub mod testutil;
+
 pub use error::AppError;
 pub use models::{Extraction, ExtractionSchema, NewExtraction, ScrapeResult, compute_hash};
 pub use scrape::ScrapeService;

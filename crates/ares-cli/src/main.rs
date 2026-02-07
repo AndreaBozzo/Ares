@@ -435,7 +435,10 @@ fn resolve_schema(schema_arg: &str) -> Result<(PathBuf, String)> {
 fn load_schema_registry() -> Result<HashMap<String, String>> {
     let registry_path = Path::new("schemas").join("registry.json");
     let registry_str = std::fs::read_to_string(&registry_path).with_context(|| {
-        format!("Failed to read schema registry: {}", registry_path.display())
+        format!(
+            "Failed to read schema registry: {}",
+            registry_path.display()
+        )
     })?;
     let registry: HashMap<String, String> =
         serde_json::from_str(&registry_str).context("Invalid JSON in schema registry")?;

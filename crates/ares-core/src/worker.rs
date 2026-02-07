@@ -194,7 +194,8 @@ where
         Ok(())
     }
 
-    async fn process_job<WR: WorkerReporter>(&self, job: &ScrapeJob, reporter: &WR) {
+    /// Process a single job. Public for testing purposes.
+    pub async fn process_job<WR: WorkerReporter>(&self, job: &ScrapeJob, reporter: &WR) {
         reporter.report(WorkerEvent::JobStarted {
             job_id: job.id,
             url: &job.url,
@@ -281,5 +282,236 @@ where
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::circuit_breaker::CircuitBreakerConfig;
+    use crate::job::{RetryConfig, WorkerConfig};
+    use crate::testutil::*;
+    use std::time::Duration;
+
+    fn test_config() -> WorkerConfig {
+        WorkerConfig {
+            worker_id: "test-worker".into(),
+            poll_interval: Duration::from_millis(10),
+            retry_config: RetryConfig::default(),
+        }
+    }
+
+    fn test_cb() -> CircuitBreaker {
+        CircuitBreaker::new("test", CircuitBreakerConfig::default())
+    }
+
+    #[tokio::test]
+    async fn process_job_successfully_completes() {
+        let job = make_test_job();
+        let queue = MockJobQueue::with_job(job.clone());
+        let reporter = MockReporter::new();
+
+        let worker = WorkerService::new(
+            queue.clone(),
+            MockFetcher::new("<html>hi</html>"),
+            MockCleaner::passthrough(),
+            MockExtractorFactory::new(serde_json::json!({"title": "Test"})),
+            MockStore::empty(),
+            test_cb(),
+            test_config(),
+        );
+
+        worker.process_job(&job, &reporter).await;
+
+        let completed = queue.completed_jobs.lock().unwrap();
+        assert_eq!(completed.len(), 1);
+        assert_eq!(completed[0].0, job.id);
+        assert!(completed[0].1.is_some()); // extraction_id
+
+        let events = reporter.events.lock().unwrap();
+        assert!(events.contains(&"JobStarted".to_string()));
+        assert!(events.contains(&"JobCompleted".to_string()));
+    }
+
+    #[tokio::test]
+    async fn process_job_retryable_error_schedules_retry() {
+        let job = make_test_job();
+        let queue = MockJobQueue::with_job(job.clone());
+        let reporter = MockReporter::new();
+
+        let worker = WorkerService::new(
+            queue.clone(),
+            MockFetcher::with_error(AppError::NetworkError("timeout".into())),
+            MockCleaner::passthrough(),
+            MockExtractorFactory::new(serde_json::json!({})),
+            MockStore::empty(),
+            test_cb(),
+            test_config(),
+        );
+
+        worker.process_job(&job, &reporter).await;
+
+        let failed = queue.failed_jobs.lock().unwrap();
+        assert_eq!(failed.len(), 1);
+        assert_eq!(failed[0].0, job.id);
+        assert!(
+            failed[0].2.is_some(),
+            "Should have next_retry_at for retryable error"
+        );
+
+        let events = reporter.events.lock().unwrap();
+        assert!(events.contains(&"JobFailed".to_string()));
+    }
+
+    #[tokio::test]
+    async fn process_job_non_retryable_error_fails_permanently() {
+        let job = make_test_job();
+        let queue = MockJobQueue::with_job(job.clone());
+        let reporter = MockReporter::new();
+
+        let worker = WorkerService::new(
+            queue.clone(),
+            MockFetcher::new("<html>hi</html>"),
+            MockCleaner::with_error(AppError::CleanerError("bad html".into())),
+            MockExtractorFactory::new(serde_json::json!({})),
+            MockStore::empty(),
+            test_cb(),
+            test_config(),
+        );
+
+        worker.process_job(&job, &reporter).await;
+
+        let failed = queue.failed_jobs.lock().unwrap();
+        assert_eq!(failed.len(), 1);
+        assert!(
+            failed[0].2.is_none(),
+            "Should NOT have next_retry_at for non-retryable error"
+        );
+    }
+
+    #[tokio::test]
+    async fn process_job_circuit_open_retries() {
+        let job = make_test_job();
+        let queue = MockJobQueue::with_job(job.clone());
+        let reporter = MockReporter::new();
+
+        let cb_config = CircuitBreakerConfig {
+            failure_threshold: 1,
+            recovery_timeout: Duration::from_secs(60),
+            ..Default::default()
+        };
+        let cb = CircuitBreaker::new("test", cb_config);
+        cb.record_failure(&AppError::NetworkError("test".into()));
+
+        let worker = WorkerService::new(
+            queue.clone(),
+            MockFetcher::new("<html>hi</html>"),
+            MockCleaner::passthrough(),
+            MockExtractorFactory::new(serde_json::json!({})),
+            MockStore::empty(),
+            cb,
+            test_config(),
+        );
+
+        worker.process_job(&job, &reporter).await;
+
+        let failed = queue.failed_jobs.lock().unwrap();
+        assert_eq!(failed.len(), 1);
+        assert!(
+            failed[0].2.is_some(),
+            "Circuit open error should schedule retry"
+        );
+    }
+
+    #[tokio::test]
+    async fn process_job_factory_error_fails_without_retry() {
+        let job = make_test_job();
+        let queue = MockJobQueue::with_job(job.clone());
+        let reporter = MockReporter::new();
+
+        let worker = WorkerService::new(
+            queue.clone(),
+            MockFetcher::new("<html>hi</html>"),
+            MockCleaner::passthrough(),
+            MockExtractorFactory::with_create_error(AppError::Generic("bad model config".into())),
+            MockStore::empty(),
+            test_cb(),
+            test_config(),
+        );
+
+        worker.process_job(&job, &reporter).await;
+
+        let failed = queue.failed_jobs.lock().unwrap();
+        assert_eq!(failed.len(), 1);
+        assert!(
+            failed[0].2.is_none(),
+            "Factory error should not schedule retry"
+        );
+
+        let events = reporter.events.lock().unwrap();
+        assert!(events.contains(&"JobFailed".to_string()));
+    }
+
+    #[tokio::test]
+    async fn run_loop_graceful_shutdown_releases_jobs() {
+        let queue = MockJobQueue::empty();
+        let reporter = MockReporter::new();
+        let cancel = CancellationToken::new();
+
+        let worker = WorkerService::new(
+            queue.clone(),
+            MockFetcher::new("<html>hi</html>"),
+            MockCleaner::passthrough(),
+            MockExtractorFactory::new(serde_json::json!({})),
+            MockStore::empty(),
+            test_cb(),
+            test_config(),
+        );
+
+        cancel.cancel();
+
+        worker.run(cancel, &reporter).await.unwrap();
+
+        let released = queue.released_workers.lock().unwrap();
+        assert_eq!(released.len(), 1);
+        assert_eq!(released[0], "test-worker");
+
+        let events = reporter.events.lock().unwrap();
+        assert!(events.contains(&"Started".to_string()));
+        assert!(events.contains(&"ShuttingDown".to_string()));
+        assert!(events.contains(&"Stopped".to_string()));
+    }
+
+    #[tokio::test]
+    async fn run_loop_processes_job_then_shuts_down() {
+        let job = make_test_job();
+        let queue = MockJobQueue::with_job(job.clone());
+        let reporter = MockReporter::new();
+        let cancel = CancellationToken::new();
+
+        let worker = WorkerService::new(
+            queue.clone(),
+            MockFetcher::new("<html>hi</html>"),
+            MockCleaner::passthrough(),
+            MockExtractorFactory::new(serde_json::json!({"title": "Test"})),
+            MockStore::empty(),
+            test_cb(),
+            test_config(),
+        );
+
+        let cancel_clone = cancel.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            cancel_clone.cancel();
+        });
+
+        worker.run(cancel, &reporter).await.unwrap();
+
+        let completed = queue.completed_jobs.lock().unwrap();
+        assert_eq!(completed.len(), 1);
+
+        let events = reporter.events.lock().unwrap();
+        assert!(events.contains(&"JobCompleted".to_string()));
+        assert!(events.contains(&"Stopped".to_string()));
     }
 }
