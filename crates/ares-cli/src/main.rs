@@ -1,4 +1,5 @@
-use std::path::PathBuf;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
@@ -29,9 +30,9 @@ enum Commands {
         #[arg(short, long)]
         url: String,
 
-        /// Path to JSON Schema file defining the extraction schema
+        /// JSON Schema path or name@version (e.g., schemas/blog/1.0.0.json or blog@1.0.0)
         #[arg(short, long)]
-        schema: PathBuf,
+        schema: String,
 
         /// LLM model to use (e.g., "gpt-4o-mini", "gemini-2.5-flash")
         #[arg(short, long, env = "ARES_MODEL")]
@@ -104,9 +105,9 @@ enum JobCommands {
         #[arg(short, long)]
         url: String,
 
-        /// Path to JSON Schema file
+        /// JSON Schema path or name@version (e.g., schemas/blog/1.0.0.json or blog@1.0.0)
         #[arg(short, long)]
-        schema: PathBuf,
+        schema: String,
 
         /// LLM model to use
         #[arg(short, long, env = "ARES_MODEL")]
@@ -174,10 +175,12 @@ async fn main() -> Result<()> {
             save,
             schema_name,
         } => {
-            let schema_name = schema_name.unwrap_or_else(|| ares_core::derive_schema_name(&schema));
+            let (schema_path, resolved_name) = resolve_schema(&schema)?;
+            let schema_name = schema_name.unwrap_or(resolved_name);
 
-            let schema_str = std::fs::read_to_string(&schema)
-                .with_context(|| format!("Failed to read schema file: {}", schema.display()))?;
+            let schema_str = std::fs::read_to_string(&schema_path).with_context(|| {
+                format!("Failed to read schema file: {}", schema_path.display())
+            })?;
             let schema_value: serde_json::Value =
                 serde_json::from_str(&schema_str).context("Invalid JSON in schema file")?;
 
@@ -226,13 +229,13 @@ async fn main() -> Result<()> {
                     base_url,
                     schema_name,
                 } => {
-                    let schema_str = std::fs::read_to_string(&schema).with_context(|| {
-                        format!("Failed to read schema file: {}", schema.display())
+                    let (schema_path, resolved_name) = resolve_schema(&schema)?;
+                    let schema_str = std::fs::read_to_string(&schema_path).with_context(|| {
+                        format!("Failed to read schema file: {}", schema_path.display())
                     })?;
                     let schema_value: serde_json::Value =
                         serde_json::from_str(&schema_str).context("Invalid JSON in schema file")?;
-                    let schema_name =
-                        schema_name.unwrap_or_else(|| ares_core::derive_schema_name(&schema));
+                    let schema_name = schema_name.unwrap_or(resolved_name);
 
                     let request = CreateScrapeJobRequest::new(
                         url,
@@ -386,6 +389,69 @@ async fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+fn resolve_schema(schema_arg: &str) -> Result<(PathBuf, String)> {
+    let path_candidate = PathBuf::from(schema_arg);
+    if path_candidate.exists() {
+        let name = schema_name_from_path(&path_candidate)
+            .unwrap_or_else(|| ares_core::derive_schema_name(&path_candidate));
+        return Ok((path_candidate, name));
+    }
+
+    let (name, version) = schema_arg
+        .split_once('@')
+        .ok_or_else(|| anyhow::anyhow!("Schema not found: {}", schema_arg))?;
+    if name.is_empty() || version.is_empty() {
+        return Err(anyhow::anyhow!(
+            "Schema must be in the form name@version, got: {}",
+            schema_arg
+        ));
+    }
+
+    let resolved_version = if version == "latest" {
+        let registry = load_schema_registry()?;
+        registry
+            .get(name)
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("No latest version for schema {}", name))?
+    } else {
+        version.to_string()
+    };
+
+    let schema_path = Path::new("schemas")
+        .join(name)
+        .join(format!("{}.json", resolved_version));
+    if !schema_path.exists() {
+        return Err(anyhow::anyhow!(
+            "Schema file not found: {}",
+            schema_path.display()
+        ));
+    }
+
+    Ok((schema_path, format!("{}@{}", name, resolved_version)))
+}
+
+fn load_schema_registry() -> Result<HashMap<String, String>> {
+    let registry_path = Path::new("schemas").join("registry.json");
+    let registry_str = std::fs::read_to_string(&registry_path).with_context(|| {
+        format!("Failed to read schema registry: {}", registry_path.display())
+    })?;
+    let registry: HashMap<String, String> =
+        serde_json::from_str(&registry_str).context("Invalid JSON in schema registry")?;
+    Ok(registry)
+}
+
+fn schema_name_from_path(path: &Path) -> Option<String> {
+    let components: Vec<String> = path
+        .components()
+        .map(|c| c.as_os_str().to_string_lossy().to_string())
+        .collect();
+    let schemas_index = components.iter().position(|c| c == "schemas")?;
+    let name = components.get(schemas_index + 1)?;
+    let file_name = components.get(schemas_index + 2)?;
+    let version = Path::new(file_name).file_stem()?.to_str()?;
+    Some(format!("{}@{}", name, version))
 }
 
 /// Connect to PostgreSQL and return an ExtractionRepository (runs migrations).
