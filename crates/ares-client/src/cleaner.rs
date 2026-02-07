@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use ares_core::error::AppError;
 use ares_core::traits::Cleaner;
 use htmd::HtmlToMarkdown;
@@ -7,7 +9,15 @@ use htmd::HtmlToMarkdown;
 /// Converts raw HTML into clean Markdown text, stripping non-content
 /// elements (script, style, nav, etc.) to minimize LLM token usage.
 pub struct HtmdCleaner {
-    converter: HtmlToMarkdown,
+    converter: Arc<HtmlToMarkdown>,
+}
+
+impl Clone for HtmdCleaner {
+    fn clone(&self) -> Self {
+        Self {
+            converter: Arc::clone(&self.converter),
+        }
+    }
 }
 
 impl HtmdCleaner {
@@ -18,7 +28,9 @@ impl HtmdCleaner {
             ])
             .build();
 
-        Self { converter }
+        Self {
+            converter: Arc::new(converter),
+        }
     }
 }
 

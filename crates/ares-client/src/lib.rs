@@ -4,4 +4,4 @@ pub mod llm;
 
 pub use cleaner::HtmdCleaner;
 pub use fetcher::ReqwestFetcher;
-pub use llm::OpenAiExtractor;
+pub use llm::{OpenAiExtractor, OpenAiExtractorFactory};

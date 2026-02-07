@@ -1,5 +1,5 @@
 use ares_core::error::AppError;
-use ares_core::traits::Extractor;
+use ares_core::traits::{Extractor, ExtractorFactory};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
@@ -188,5 +188,30 @@ impl Extractor for OpenAiExtractor {
                 e, content_str
             ))
         })
+    }
+}
+
+/// Factory that creates `OpenAiExtractor` instances with a shared API key.
+///
+/// Used by the worker to construct per-job extractors, since each job may
+/// specify a different model or base URL.
+#[derive(Clone)]
+pub struct OpenAiExtractorFactory {
+    api_key: String,
+}
+
+impl OpenAiExtractorFactory {
+    pub fn new(api_key: impl Into<String>) -> Self {
+        Self {
+            api_key: api_key.into(),
+        }
+    }
+}
+
+impl ExtractorFactory for OpenAiExtractorFactory {
+    type Extractor = OpenAiExtractor;
+
+    fn create(&self, model: &str, base_url: &str) -> Result<OpenAiExtractor, AppError> {
+        OpenAiExtractor::with_base_url(&self.api_key, model, base_url)
     }
 }

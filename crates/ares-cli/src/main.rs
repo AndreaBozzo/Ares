@@ -1,15 +1,18 @@
 use std::path::PathBuf;
-use std::path::Path;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
+use tokio_util::sync::CancellationToken;
 use tracing_subscriber::EnvFilter;
+use uuid::Uuid;
 
-use ares_client::{HtmdCleaner, OpenAiExtractor, ReqwestFetcher};
-use ares_core::compute_hash;
-use ares_core::models::NewExtraction;
-use ares_core::traits::{Cleaner, Extractor, Fetcher};
-use ares_db::ExtractionRepository;
+use ares_client::{HtmdCleaner, OpenAiExtractor, OpenAiExtractorFactory, ReqwestFetcher};
+use ares_core::circuit_breaker::{CircuitBreaker, CircuitBreakerConfig};
+use ares_core::job::{CreateScrapeJobRequest, JobStatus, WorkerConfig};
+use ares_core::job_queue::JobQueue;
+use ares_core::worker::{TracingWorkerReporter, WorkerService};
+use ares_core::{NullStore, ScrapeService};
+use ares_db::{ExtractionRepository, ScrapeJobRepository};
 
 #[derive(Parser)]
 #[command(name = "ares", version, about = "Industrial Grade AI Scraper")]
@@ -70,14 +73,89 @@ enum Commands {
         #[arg(short, long, default_value_t = 10)]
         limit: usize,
     },
+
+    /// Manage scrape jobs
+    Job {
+        #[command(subcommand)]
+        action: JobCommands,
+    },
+
+    /// Start a worker to process scrape jobs
+    Worker {
+        /// Worker ID (auto-generated if not provided)
+        #[arg(long)]
+        worker_id: Option<String>,
+
+        /// Poll interval in seconds
+        #[arg(long, default_value_t = 5)]
+        poll_interval: u64,
+
+        /// API key for LLM calls
+        #[arg(short, long, env = "ARES_API_KEY")]
+        api_key: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum JobCommands {
+    /// Create a new scrape job
+    Create {
+        /// Target URL to scrape
+        #[arg(short, long)]
+        url: String,
+
+        /// Path to JSON Schema file
+        #[arg(short, long)]
+        schema: PathBuf,
+
+        /// LLM model to use
+        #[arg(short, long, env = "ARES_MODEL")]
+        model: String,
+
+        /// OpenAI-compatible API base URL
+        #[arg(
+            short,
+            long,
+            env = "ARES_BASE_URL",
+            default_value = "https://api.openai.com/v1"
+        )]
+        base_url: String,
+
+        /// Schema name (defaults to filename without extension)
+        #[arg(long)]
+        schema_name: Option<String>,
+    },
+
+    /// List scrape jobs
+    List {
+        /// Filter by status (pending, running, completed, failed, cancelled)
+        #[arg(short, long)]
+        status: Option<String>,
+
+        /// Number of results
+        #[arg(short, long, default_value_t = 20)]
+        limit: usize,
+    },
+
+    /// Show details of a specific job
+    Show {
+        /// Job ID
+        #[arg(value_name = "JOB_ID")]
+        id: Uuid,
+    },
+
+    /// Cancel a pending or running job
+    Cancel {
+        /// Job ID
+        #[arg(value_name = "JOB_ID")]
+        id: Uuid,
+    },
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Load .env if present
     let _ = dotenvy::dotenv();
 
-    // Setup tracing
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env().add_directive("ares=info".parse()?))
         .with_target(false)
@@ -96,23 +174,37 @@ async fn main() -> Result<()> {
             save,
             schema_name,
         } => {
-            let repo = if save {
-                Some(connect_db().await?)
+            let schema_name = schema_name.unwrap_or_else(|| ares_core::derive_schema_name(&schema));
+
+            let schema_str = std::fs::read_to_string(&schema)
+                .with_context(|| format!("Failed to read schema file: {}", schema.display()))?;
+            let schema_value: serde_json::Value =
+                serde_json::from_str(&schema_str).context("Invalid JSON in schema file")?;
+
+            let fetcher = ReqwestFetcher::new().context("Failed to create HTTP client")?;
+            let cleaner = HtmdCleaner::new();
+            let extractor = OpenAiExtractor::with_base_url(&api_key, &model, &base_url)
+                .map_err(|e| anyhow::anyhow!(e))?;
+
+            let result = if save {
+                let repo = connect_db().await?;
+                let service = ScrapeService::with_store(fetcher, cleaner, extractor, repo, model);
+                service
+                    .scrape(&url, &schema_value, &schema_name)
+                    .await
+                    .map_err(|e| anyhow::anyhow!(e))?
             } else {
-                None
+                let service =
+                    ScrapeService::with_store(fetcher, cleaner, extractor, NullStore, model);
+                service
+                    .scrape(&url, &schema_value, &schema_name)
+                    .await
+                    .map_err(|e| anyhow::anyhow!(e))?
             };
-            let schema_name = schema_name.unwrap_or_else(|| derive_schema_name(&schema));
-            cmd_scrape(
-                &url,
-                &schema,
-                &schema_name,
-                &model,
-                &base_url,
-                &api_key,
-                repo.as_ref(),
-            )
-            .await?;
+
+            println!("{}", serde_json::to_string_pretty(&result.extracted_data)?);
         }
+
         Commands::History {
             url,
             schema_name,
@@ -121,15 +213,193 @@ async fn main() -> Result<()> {
             let repo = connect_db().await?;
             cmd_history(&url, &schema_name, limit, &repo).await?;
         }
+
+        Commands::Job { action } => {
+            let pool = connect_pool().await?;
+            let job_repo = ScrapeJobRepository::new(pool);
+
+            match action {
+                JobCommands::Create {
+                    url,
+                    schema,
+                    model,
+                    base_url,
+                    schema_name,
+                } => {
+                    let schema_str = std::fs::read_to_string(&schema).with_context(|| {
+                        format!("Failed to read schema file: {}", schema.display())
+                    })?;
+                    let schema_value: serde_json::Value =
+                        serde_json::from_str(&schema_str).context("Invalid JSON in schema file")?;
+                    let schema_name =
+                        schema_name.unwrap_or_else(|| ares_core::derive_schema_name(&schema));
+
+                    let request = CreateScrapeJobRequest::new(
+                        url,
+                        schema_name,
+                        schema_value,
+                        model,
+                        base_url,
+                    );
+                    let job = job_repo
+                        .create_job(request)
+                        .await
+                        .map_err(|e| anyhow::anyhow!(e))?;
+                    println!("Created job: {}", job.id);
+                }
+
+                JobCommands::List { status, limit } => {
+                    let status_filter = status
+                        .map(|s| {
+                            s.parse::<JobStatus>()
+                                .map_err(|e| anyhow::anyhow!("Invalid status: {}", e))
+                        })
+                        .transpose()?;
+
+                    let jobs = job_repo
+                        .list_jobs(status_filter, limit)
+                        .await
+                        .map_err(|e| anyhow::anyhow!(e))?;
+
+                    if jobs.is_empty() {
+                        println!("No jobs found.");
+                        return Ok(());
+                    }
+
+                    println!(
+                        "{:<38} {:<12} {:<40} {:<20} {:<16}",
+                        "ID", "STATUS", "URL", "MODEL", "CREATED"
+                    );
+                    println!("{}", "-".repeat(120));
+
+                    for job in &jobs {
+                        let url_display = if job.url.len() > 38 {
+                            format!("{}...", &job.url[..35])
+                        } else {
+                            job.url.clone()
+                        };
+                        println!(
+                            "{:<38} {:<12} {:<40} {:<20} {}",
+                            job.id,
+                            job.status,
+                            url_display,
+                            job.model,
+                            job.created_at.format("%Y-%m-%d %H:%M"),
+                        );
+                    }
+
+                    println!("\nTotal: {} jobs", jobs.len());
+                }
+
+                JobCommands::Show { id } => {
+                    let job = job_repo
+                        .get_job(id)
+                        .await
+                        .map_err(|e| anyhow::anyhow!(e))?
+                        .ok_or_else(|| anyhow::anyhow!("Job not found: {}", id))?;
+
+                    println!("Job: {}", job.id);
+                    println!("  Status:      {}", job.status);
+                    println!("  URL:         {}", job.url);
+                    println!("  Schema:      {}", job.schema_name);
+                    println!("  Model:       {}", job.model);
+                    println!("  Base URL:    {}", job.base_url);
+                    println!("  Created:     {}", job.created_at);
+                    println!("  Updated:     {}", job.updated_at);
+                    if let Some(started) = job.started_at {
+                        println!("  Started:     {}", started);
+                    }
+                    if let Some(completed) = job.completed_at {
+                        println!("  Completed:   {}", completed);
+                    }
+                    println!("  Retries:     {}/{}", job.retry_count, job.max_retries);
+                    if let Some(next) = job.next_retry_at {
+                        println!("  Next retry:  {}", next);
+                    }
+                    if let Some(err) = &job.error_message {
+                        println!("  Error:       {}", err);
+                    }
+                    if let Some(eid) = job.extraction_id {
+                        println!("  Extraction:  {}", eid);
+                    }
+                    if let Some(wid) = &job.worker_id {
+                        println!("  Worker:      {}", wid);
+                    }
+                }
+
+                JobCommands::Cancel { id } => {
+                    job_repo
+                        .cancel_job(id)
+                        .await
+                        .map_err(|e| anyhow::anyhow!(e))?;
+                    println!("Cancelled job: {}", id);
+                }
+            }
+        }
+
+        Commands::Worker {
+            worker_id,
+            poll_interval,
+            api_key,
+        } => {
+            let pool = connect_pool().await?;
+            let job_repo = ScrapeJobRepository::new(pool.clone());
+            let extraction_repo = ExtractionRepository::new(pool);
+
+            let config = WorkerConfig::default()
+                .with_poll_interval(std::time::Duration::from_secs(poll_interval));
+            let config = if let Some(id) = worker_id {
+                config.with_worker_id(id)
+            } else {
+                config
+            };
+
+            let fetcher = ReqwestFetcher::new().context("Failed to create HTTP client")?;
+            let cleaner = HtmdCleaner::new();
+            let extractor_factory = OpenAiExtractorFactory::new(&api_key);
+            let cb = CircuitBreaker::new("llm", CircuitBreakerConfig::default());
+
+            let worker = WorkerService::new(
+                job_repo,
+                fetcher,
+                cleaner,
+                extractor_factory,
+                extraction_repo,
+                cb,
+                config,
+            );
+
+            let cancel = CancellationToken::new();
+            let token = cancel.clone();
+
+            tokio::spawn(async move {
+                tokio::signal::ctrl_c().await.ok();
+                tracing::info!("Shutdown signal received");
+                token.cancel();
+            });
+
+            worker
+                .run(cancel, &TracingWorkerReporter)
+                .await
+                .map_err(|e| anyhow::anyhow!(e))?;
+        }
     }
 
     Ok(())
 }
 
-/// Connect to PostgreSQL using DATABASE_URL.
+/// Connect to PostgreSQL and return an ExtractionRepository (runs migrations).
 async fn connect_db() -> Result<ExtractionRepository> {
+    let pool = connect_pool().await?;
+    let repo = ExtractionRepository::new(pool);
+    repo.migrate().await.map_err(|e| anyhow::anyhow!(e))?;
+    Ok(repo)
+}
+
+/// Connect to PostgreSQL and return the pool (runs migrations).
+async fn connect_pool() -> Result<sqlx::PgPool> {
     let database_url = std::env::var("DATABASE_URL")
-        .context("DATABASE_URL not set. Required for --save or history command.")?;
+        .context("DATABASE_URL not set. Required for database operations.")?;
 
     let pool = sqlx::postgres::PgPoolOptions::new()
         .max_connections(5)
@@ -137,120 +407,13 @@ async fn connect_db() -> Result<ExtractionRepository> {
         .await
         .context("Failed to connect to database")?;
 
-    let repo = ExtractionRepository::new(pool);
-    repo.migrate().await.map_err(|e| anyhow::anyhow!(e))?;
-
-    Ok(repo)
-}
-
-/// Derive schema name from file path (e.g., "schema_case.json" -> "schema_case")
-fn derive_schema_name(path: &Path) -> String {
-    path.file_stem()
-        .and_then(|s: &std::ffi::OsStr| s.to_str())
-        .unwrap_or("default")
-        .to_string()
-}
-
-async fn cmd_scrape(
-    url: &str,
-    schema_path: &PathBuf,
-    schema_name: &str,
-    model: &str,
-    base_url: &str,
-    api_key: &str,
-    repo: Option<&ExtractionRepository>,
-) -> Result<()> {
-    // 1. Load schema from file
-    let schema_str = std::fs::read_to_string(schema_path)
-        .with_context(|| format!("Failed to read schema file: {}", schema_path.display()))?;
-    let schema: serde_json::Value =
-        serde_json::from_str(&schema_str).context("Invalid JSON in schema file")?;
-
-    tracing::info!("Fetching {}", url);
-
-    // 2. Fetch HTML
-    let fetcher = ReqwestFetcher::new().context("Failed to create HTTP client")?;
-    let html = fetcher.fetch(url).await.map_err(|e| anyhow::anyhow!(e))?;
-
-    tracing::info!("Fetched {} bytes of HTML", html.len());
-
-    // 3. Clean HTML -> Markdown
-    let cleaner = HtmdCleaner::new();
-    let markdown = cleaner.clean(&html).map_err(|e| anyhow::anyhow!(e))?;
-
-    tracing::info!(
-        "Cleaned to {} bytes of Markdown ({}% reduction)",
-        markdown.len(),
-        if html.is_empty() {
-            0
-        } else {
-            100 - (markdown.len() * 100 / html.len())
-        }
-    );
-
-    // 4. Extract structured data via LLM
-    let extractor =
-        OpenAiExtractor::with_base_url(api_key, model, base_url).map_err(|e| anyhow::anyhow!(e))?;
-
-    tracing::info!("Extracting with model {} ...", model);
-
-    let extracted = extractor
-        .extract(&markdown, &schema)
+    // Run migrations
+    sqlx::migrate!("../../migrations")
+        .run(&pool)
         .await
-        .map_err(|e| anyhow::anyhow!(e))?;
+        .map_err(|e| anyhow::anyhow!("Migration failed: {}", e))?;
 
-    // 5. Compute hashes
-    let content_hash = compute_hash(&markdown);
-    let data_hash = compute_hash(&extracted.to_string());
-
-    tracing::info!(
-        content_hash = %&content_hash[..8],
-        data_hash = %&data_hash[..8],
-        "Extraction complete"
-    );
-
-    // 6. Save to DB if requested
-    if let Some(repo) = repo {
-        // Check if data changed compared to previous extraction
-        let previous = repo
-            .get_latest(url, schema_name)
-            .await
-            .map_err(|e| anyhow::anyhow!(e))?;
-
-        let changed = match &previous {
-            Some(prev) => prev.data_hash != data_hash,
-            None => true,
-        };
-
-        let new_extraction = NewExtraction {
-            url: url.to_string(),
-            schema_name: schema_name.to_string(),
-            extracted_data: extracted.clone(),
-            raw_content_hash: content_hash,
-            data_hash,
-            model: model.to_string(),
-        };
-
-        let id = repo
-            .save(&new_extraction)
-            .await
-            .map_err(|e| anyhow::anyhow!(e))?;
-
-        if changed {
-            if previous.is_some() {
-                tracing::info!(%id, "Data CHANGED — saved new extraction");
-            } else {
-                tracing::info!(%id, "First extraction — saved");
-            }
-        } else {
-            tracing::info!(%id, "Data unchanged — saved snapshot");
-        }
-    }
-
-    // 7. Output JSON to stdout
-    println!("{}", serde_json::to_string_pretty(&extracted)?);
-
-    Ok(())
+    Ok(pool)
 }
 
 async fn cmd_history(

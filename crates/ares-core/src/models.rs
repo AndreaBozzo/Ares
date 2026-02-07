@@ -40,6 +40,21 @@ pub struct NewExtraction {
     pub model: String,
 }
 
+/// Result of a scrape pipeline execution.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ScrapeResult {
+    /// The extracted structured data.
+    pub extracted_data: serde_json::Value,
+    /// SHA-256 of the cleaned markdown content.
+    pub content_hash: String,
+    /// SHA-256 of the extracted JSON data.
+    pub data_hash: String,
+    /// Whether data changed compared to the previous extraction.
+    pub changed: bool,
+    /// The persisted extraction ID (if saved to DB).
+    pub extraction_id: Option<Uuid>,
+}
+
 /// Compute a SHA-256 hash of a string, returned as 64-char hex.
 pub fn compute_hash(content: &str) -> String {
     let mut hasher = Sha256::new();

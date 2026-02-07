@@ -11,7 +11,7 @@ pub trait Fetcher: Send + Sync + Clone {
 }
 
 /// Converts raw HTML into clean Markdown text.
-pub trait Cleaner: Send + Sync {
+pub trait Cleaner: Send + Sync + Clone {
     fn clean(&self, html: &str) -> Result<String, AppError>;
 }
 
@@ -23,6 +23,16 @@ pub trait Extractor: Send + Sync + Clone {
         content: &str,
         schema: &serde_json::Value,
     ) -> impl Future<Output = Result<serde_json::Value, AppError>> + Send;
+}
+
+/// Factory for creating Extractor instances with specific model/base_url.
+///
+/// Enables per-job extractor configuration in the worker, where each job
+/// may specify a different model or API endpoint.
+pub trait ExtractorFactory: Send + Sync + Clone {
+    type Extractor: Extractor;
+
+    fn create(&self, model: &str, base_url: &str) -> Result<Self::Extractor, AppError>;
 }
 
 /// Persists and retrieves extraction results.
@@ -47,4 +57,31 @@ pub trait ExtractionStore: Send + Sync + Clone {
         schema_name: &str,
         limit: usize,
     ) -> impl Future<Output = Result<Vec<Extraction>, AppError>> + Send;
+}
+
+/// A no-op ExtractionStore for use when persistence is not needed.
+#[derive(Debug, Clone)]
+pub struct NullStore;
+
+impl ExtractionStore for NullStore {
+    async fn save(&self, _extraction: &NewExtraction) -> Result<Uuid, AppError> {
+        Ok(Uuid::nil())
+    }
+
+    async fn get_latest(
+        &self,
+        _url: &str,
+        _schema_name: &str,
+    ) -> Result<Option<Extraction>, AppError> {
+        Ok(None)
+    }
+
+    async fn get_history(
+        &self,
+        _url: &str,
+        _schema_name: &str,
+        _limit: usize,
+    ) -> Result<Vec<Extraction>, AppError> {
+        Ok(vec![])
+    }
 }
