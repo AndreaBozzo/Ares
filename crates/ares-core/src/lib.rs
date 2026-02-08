@@ -4,6 +4,7 @@ pub mod job;
 pub mod job_queue;
 pub mod models;
 pub mod scrape;
+pub mod throttle;
 pub mod traits;
 pub mod util;
 pub mod worker;

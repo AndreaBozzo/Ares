@@ -15,5 +15,6 @@ sha2.workspace = true
 tracing.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
+url = "2"
 
 [dev-dependencies]

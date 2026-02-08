@@ -263,10 +263,7 @@ async fn main() -> Result<()> {
                         model,
                         base_url,
                     );
-                    let job = job_repo
-                        .create_job(request)
-                        .await
-                        .map_err(|e| anyhow::anyhow!(e))?;
+                    let job = job_repo.create_job(request).await?;
                     println!("Created job: {}", job.id);
                 }
 
@@ -278,10 +275,7 @@ async fn main() -> Result<()> {
                         })
                         .transpose()?;
 
-                    let jobs = job_repo
-                        .list_jobs(status_filter, limit)
-                        .await
-                        .map_err(|e| anyhow::anyhow!(e))?;
+                    let jobs = job_repo.list_jobs(status_filter, limit).await?;
 
                     if jobs.is_empty() {
                         println!("No jobs found.");
@@ -316,8 +310,7 @@ async fn main() -> Result<()> {
                 JobCommands::Show { id } => {
                     let job = job_repo
                         .get_job(id)
-                        .await
-                        .map_err(|e| anyhow::anyhow!(e))?
+                        .await?
                         .ok_or_else(|| anyhow::anyhow!("Job not found: {}", id))?;
 
                     println!("Job: {}", job.id);
@@ -350,10 +343,7 @@ async fn main() -> Result<()> {
                 }
 
                 JobCommands::Cancel { id } => {
-                    job_repo
-                        .cancel_job(id)
-                        .await
-                        .map_err(|e| anyhow::anyhow!(e))?;
+                    job_repo.cancel_job(id).await?;
                     println!("Cancelled job: {}", id);
                 }
             }
@@ -397,8 +387,7 @@ struct ScrapeOpts<'a> {
 /// One-shot scrape: fetch → clean → extract → (optionally) persist.
 async fn cmd_scrape<F: Fetcher>(fetcher: F, opts: ScrapeOpts<'_>) -> Result<()> {
     let cleaner = HtmdCleaner::new();
-    let extractor = OpenAiExtractor::with_base_url(opts.api_key, opts.model, opts.base_url)
-        .map_err(|e| anyhow::anyhow!(e))?;
+    let extractor = OpenAiExtractor::with_base_url(opts.api_key, opts.model, opts.base_url)?;
 
     let result = if opts.save {
         let repo = connect_db().await?;
@@ -406,8 +395,7 @@ async fn cmd_scrape<F: Fetcher>(fetcher: F, opts: ScrapeOpts<'_>) -> Result<()> 
             ScrapeService::with_store(fetcher, cleaner, extractor, repo, opts.model.to_string());
         service
             .scrape(opts.url, &opts.schema_value, opts.schema_name)
-            .await
-            .map_err(|e| anyhow::anyhow!(e))?
+            .await?
     } else {
         let service = ScrapeService::with_store(
             fetcher,
@@ -418,8 +406,7 @@ async fn cmd_scrape<F: Fetcher>(fetcher: F, opts: ScrapeOpts<'_>) -> Result<()> 
         );
         service
             .scrape(opts.url, &opts.schema_value, opts.schema_name)
-            .await
-            .map_err(|e| anyhow::anyhow!(e))?
+            .await?
     };
 
     println!("{}", serde_json::to_string_pretty(&result.extracted_data)?);
@@ -468,10 +455,7 @@ async fn cmd_worker<F: Fetcher>(
         token.cancel();
     });
 
-    worker
-        .run(cancel, &TracingWorkerReporter)
-        .await
-        .map_err(|e| anyhow::anyhow!(e))?;
+    worker.run(cancel, &TracingWorkerReporter).await?;
 
     Ok(())
 }
@@ -482,9 +466,7 @@ async fn cmd_worker<F: Fetcher>(
 
 #[cfg(feature = "browser")]
 async fn create_browser_fetcher() -> Result<ares_client::BrowserFetcher> {
-    ares_client::BrowserFetcher::new()
-        .await
-        .map_err(|e| anyhow::anyhow!(e))
+    Ok(ares_client::BrowserFetcher::new().await?)
 }
 
 #[cfg(not(feature = "browser"))]
@@ -569,7 +551,7 @@ fn schema_name_from_path(path: &Path) -> Option<String> {
 async fn connect_db() -> Result<ExtractionRepository> {
     let pool = connect_pool().await?;
     let repo = ExtractionRepository::new(pool);
-    repo.migrate().await.map_err(|e| anyhow::anyhow!(e))?;
+    repo.migrate().await?;
     Ok(repo)
 }
 
@@ -588,7 +570,7 @@ async fn connect_pool() -> Result<sqlx::PgPool> {
     sqlx::migrate!("../../migrations")
         .run(&pool)
         .await
-        .map_err(|e| anyhow::anyhow!("Migration failed: {}", e))?;
+        .context("Migration failed")?;
 
     Ok(pool)
 }
@@ -599,10 +581,7 @@ async fn cmd_history(
     limit: usize,
     repo: &ExtractionRepository,
 ) -> Result<()> {
-    let history = repo
-        .get_history(url, schema_name, limit)
-        .await
-        .map_err(|e| anyhow::anyhow!(e))?;
+    let history = repo.get_history(url, schema_name, limit).await?;
 
     if history.is_empty() {
         println!(
