@@ -21,6 +21,10 @@ Conceptual sibling of [Ceres](https://github.com/AndreaBozzo/Ceres) — same phi
 
 ## Architecture
 
+![Architecture diagram](docs/assets/aresarchitecture.png)
+
+This is laid out this way because I played Fallout before it became mainstream.
+
 ```
 ares-cli          CLI interface — arg parsing, wiring, delegation
 ares-core         Business logic — ScrapeService, WorkerService, CircuitBreaker, traits
