@@ -13,7 +13,7 @@
   <a href="https://discord.gg/UyCzNVVk"><img src="https://img.shields.io/discord/1469399961987711161?color=5865F2&logo=discord&logoColor=white&label=Discord" alt="Discord"></a>
 </p>
 
-> *Named after the Greek god of war and courage.*
+<p align="center"><em>Named after the Greek god of war and courage.</em></p>
 
 ---
 
