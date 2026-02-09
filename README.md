@@ -13,6 +13,8 @@
   <a href="https://discord.gg/UyCzNVVk"><img src="https://img.shields.io/discord/1469399961987711161?color=5865F2&logo=discord&logoColor=white&label=Discord" alt="Discord"></a>
 </p>
 
+> *Named after the Greek god of war and courage.*
+
 ---
 
 Ares fetches web pages, converts HTML to Markdown, and uses LLM APIs to extract structured data defined by JSON Schemas. It supports persistent job queues with retries, circuit breaking, change detection, and graceful worker shutdown.
@@ -23,7 +25,7 @@ Conceptual sibling of [Ceres](https://github.com/AndreaBozzo/Ceres) — same phi
 
 ![Architecture diagram](docs/assets/aresarchitecture.png)
 
-This is laid out this way because I played Fallout before it became mainstream.
+This is laid out this way because I played Fallout before it became mainstream, it's garbage but it works for now.
 
 ```
 ares-cli          CLI interface — arg parsing, wiring, delegation
