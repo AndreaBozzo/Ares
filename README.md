@@ -13,11 +13,11 @@
   <a href="https://discord.gg/UyCzNVVk"><img src="https://img.shields.io/discord/1469399961987711161?color=5865F2&logo=discord&logoColor=white&label=Discord" alt="Discord"></a>
 </p>
 
-<p align="center"><em>Named after the Greek god of war and courage.</em></p>
-
 ---
 
 Ares fetches web pages, converts HTML to Markdown, and uses LLM APIs to extract structured data defined by JSON Schemas. It supports persistent job queues with retries, circuit breaking, change detection, and graceful worker shutdown.
+
+> *Named after the Greek god of war and courage.*
 
 Conceptual sibling of [Ceres](https://github.com/AndreaBozzo/Ceres) — same philosophy, different temperament. Where Ceres is the nurturing goddess of harvest, Ares charges headfirst into the web and *takes* what it needs.
 
