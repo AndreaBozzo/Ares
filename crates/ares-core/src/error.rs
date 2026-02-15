@@ -23,6 +23,10 @@ pub enum AppError {
     #[error("Schema validation error: {0}")]
     SchemaValidationError(String),
 
+    /// Schema resolution failed (file not found, invalid format, etc.).
+    #[error("Schema error: {0}")]
+    SchemaError(String),
+
     /// JSON serialization/deserialization failed.
     #[error("Serialization error: {0}")]
     SerializationError(#[from] serde_json::Error),
@@ -38,6 +42,10 @@ pub enum AppError {
     /// Network/connection error.
     #[error("Network error: {0}")]
     NetworkError(String),
+
+    /// Configuration error (missing or invalid env var, etc.).
+    #[error("Configuration error: {0}")]
+    ConfigError(String),
 
     /// Database operation failed.
     #[error("Database error: {0}")]
