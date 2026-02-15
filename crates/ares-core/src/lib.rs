@@ -7,7 +7,6 @@ pub mod schema;
 pub mod scrape;
 pub mod throttle;
 pub mod traits;
-pub mod util;
 pub mod worker;
 
 #[cfg(test)]
