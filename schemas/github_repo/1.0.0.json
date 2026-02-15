@@ -1,0 +1,62 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "GitHubRepo",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Repository name (owner/repo)"
+    },
+    "description": {
+      "type": "string",
+      "description": "Short repository description"
+    },
+    "stars": {
+      "type": "integer",
+      "description": "Number of stars"
+    },
+    "forks": {
+      "type": "integer",
+      "description": "Number of forks"
+    },
+    "language": {
+      "type": "string",
+      "description": "Primary programming language"
+    },
+    "topics": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Repository topic tags"
+    },
+    "license": {
+      "type": "string",
+      "description": "License name (e.g. MIT, Apache-2.0)"
+    },
+    "open_issues": {
+      "type": "integer",
+      "description": "Number of open issues"
+    },
+    "last_updated": {
+      "type": "string",
+      "description": "Last commit or activity date"
+    },
+    "readme_summary": {
+      "type": "string",
+      "description": "A brief summary of what the project does, based on the README"
+    }
+  },
+  "required": [
+    "name",
+    "description",
+    "stars",
+    "forks",
+    "language",
+    "topics",
+    "license",
+    "open_issues",
+    "last_updated",
+    "readme_summary"
+  ]
+}
