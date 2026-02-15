@@ -277,7 +277,10 @@ mod tests {
 
         // Structured path → name@version
         let blog_path = schemas_dir.join("blog/1.0.0.json");
-        assert_eq!(resolver.structured_name(&blog_path), Some("blog@1.0.0".to_string()));
+        assert_eq!(
+            resolver.structured_name(&blog_path),
+            Some("blog@1.0.0".to_string())
+        );
 
         // Flat file directly in schemas_dir → None (not enough depth)
         let flat_path = schemas_dir.join("flat.json");
