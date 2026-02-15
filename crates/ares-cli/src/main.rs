@@ -1,6 +1,3 @@
-use std::collections::HashMap;
-use std::path::{Path, PathBuf};
-
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use tokio_util::sync::CancellationToken;
@@ -13,8 +10,8 @@ use ares_core::job::{CreateScrapeJobRequest, JobStatus, WorkerConfig};
 use ares_core::job_queue::JobQueue;
 use ares_core::traits::Fetcher;
 use ares_core::worker::{TracingWorkerReporter, WorkerService};
-use ares_core::{NullStore, ScrapeService};
-use ares_db::{ExtractionRepository, ScrapeJobRepository};
+use ares_core::{NullStore, SchemaResolver, ScrapeService};
+use ares_db::{Database, DatabaseConfig, ExtractionRepository};
 
 #[derive(Parser)]
 #[command(name = "ares", version, about = "Industrial Grade AI Scraper")]
@@ -185,14 +182,9 @@ async fn main() -> Result<()> {
             schema_name,
             browser,
         } => {
-            let (schema_path, resolved_name) = resolve_schema(&schema)?;
-            let schema_name = schema_name.unwrap_or(resolved_name);
-
-            let schema_str = std::fs::read_to_string(&schema_path).with_context(|| {
-                format!("Failed to read schema file: {}", schema_path.display())
-            })?;
-            let schema_value: serde_json::Value =
-                serde_json::from_str(&schema_str).context("Invalid JSON in schema file")?;
+            let resolved = SchemaResolver::new("schemas").resolve(&schema)?;
+            let schema_name = schema_name.unwrap_or(resolved.name);
+            let schema_value = resolved.schema;
 
             if browser {
                 let fetcher = create_browser_fetcher().await?;
@@ -232,13 +224,16 @@ async fn main() -> Result<()> {
             schema_name,
             limit,
         } => {
-            let repo = connect_db().await?;
+            let db = Database::connect(&DatabaseConfig::from_env()?).await?;
+            db.migrate().await?;
+            let repo = db.extraction_repo();
             cmd_history(&url, &schema_name, limit, &repo).await?;
         }
 
         Commands::Job { action } => {
-            let pool = connect_pool().await?;
-            let job_repo = ScrapeJobRepository::new(pool);
+            let db = Database::connect(&DatabaseConfig::from_env()?).await?;
+            db.migrate().await?;
+            let job_repo = db.job_repo();
 
             match action {
                 JobCommands::Create {
@@ -248,13 +243,9 @@ async fn main() -> Result<()> {
                     base_url,
                     schema_name,
                 } => {
-                    let (schema_path, resolved_name) = resolve_schema(&schema)?;
-                    let schema_str = std::fs::read_to_string(&schema_path).with_context(|| {
-                        format!("Failed to read schema file: {}", schema_path.display())
-                    })?;
-                    let schema_value: serde_json::Value =
-                        serde_json::from_str(&schema_str).context("Invalid JSON in schema file")?;
-                    let schema_name = schema_name.unwrap_or(resolved_name);
+                    let resolved = SchemaResolver::new("schemas").resolve(&schema)?;
+                    let schema_name = schema_name.unwrap_or(resolved.name);
+                    let schema_value = resolved.schema;
 
                     let request = CreateScrapeJobRequest::new(
                         url,
@@ -390,7 +381,9 @@ async fn cmd_scrape<F: Fetcher>(fetcher: F, opts: ScrapeOpts<'_>) -> Result<()> 
     let extractor = OpenAiExtractor::with_base_url(opts.api_key, opts.model, opts.base_url)?;
 
     let result = if opts.save {
-        let repo = connect_db().await?;
+        let db = Database::connect(&DatabaseConfig::from_env()?).await?;
+        db.migrate().await?;
+        let repo = db.extraction_repo();
         let service =
             ScrapeService::with_store(fetcher, cleaner, extractor, repo, opts.model.to_string());
         service
@@ -420,9 +413,10 @@ async fn cmd_worker<F: Fetcher>(
     worker_id: Option<String>,
     poll_interval: u64,
 ) -> Result<()> {
-    let pool = connect_pool().await?;
-    let job_repo = ScrapeJobRepository::new(pool.clone());
-    let extraction_repo = ExtractionRepository::new(pool);
+    let db = Database::connect(&DatabaseConfig::from_env()?).await?;
+    db.migrate().await?;
+    let job_repo = db.job_repo();
+    let extraction_repo = db.extraction_repo();
 
     let config =
         WorkerConfig::default().with_poll_interval(std::time::Duration::from_secs(poll_interval));
@@ -475,104 +469,6 @@ async fn create_browser_fetcher() -> Result<ReqwestFetcher> {
         "--browser requires the `browser` feature.\n\
          Rebuild with: cargo build --features browser"
     );
-}
-
-// ---------------------------------------------------------------------------
-// Schema resolution & helpers.
-// ---------------------------------------------------------------------------
-
-fn resolve_schema(schema_arg: &str) -> Result<(PathBuf, String)> {
-    let path_candidate = PathBuf::from(schema_arg);
-    if path_candidate.exists() {
-        let name = schema_name_from_path(&path_candidate)
-            .unwrap_or_else(|| ares_core::derive_schema_name(&path_candidate));
-        return Ok((path_candidate, name));
-    }
-
-    let (name, version) = schema_arg
-        .split_once('@')
-        .ok_or_else(|| anyhow::anyhow!("Schema not found: {}", schema_arg))?;
-    if name.is_empty() || version.is_empty() {
-        return Err(anyhow::anyhow!(
-            "Schema must be in the form name@version, got: {}",
-            schema_arg
-        ));
-    }
-
-    let resolved_version = if version == "latest" {
-        let registry = load_schema_registry()?;
-        registry
-            .get(name)
-            .cloned()
-            .ok_or_else(|| anyhow::anyhow!("No latest version for schema {}", name))?
-    } else {
-        version.to_string()
-    };
-
-    let schema_path = Path::new("schemas")
-        .join(name)
-        .join(format!("{}.json", resolved_version));
-    if !schema_path.exists() {
-        return Err(anyhow::anyhow!(
-            "Schema file not found: {}",
-            schema_path.display()
-        ));
-    }
-
-    Ok((schema_path, format!("{}@{}", name, resolved_version)))
-}
-
-fn load_schema_registry() -> Result<HashMap<String, String>> {
-    let registry_path = Path::new("schemas").join("registry.json");
-    let registry_str = std::fs::read_to_string(&registry_path).with_context(|| {
-        format!(
-            "Failed to read schema registry: {}",
-            registry_path.display()
-        )
-    })?;
-    let registry: HashMap<String, String> =
-        serde_json::from_str(&registry_str).context("Invalid JSON in schema registry")?;
-    Ok(registry)
-}
-
-fn schema_name_from_path(path: &Path) -> Option<String> {
-    let components: Vec<String> = path
-        .components()
-        .map(|c| c.as_os_str().to_string_lossy().to_string())
-        .collect();
-    let schemas_index = components.iter().position(|c| c == "schemas")?;
-    let name = components.get(schemas_index + 1)?;
-    let file_name = components.get(schemas_index + 2)?;
-    let version = Path::new(file_name).file_stem()?.to_str()?;
-    Some(format!("{}@{}", name, version))
-}
-
-/// Connect to PostgreSQL and return an ExtractionRepository (runs migrations).
-async fn connect_db() -> Result<ExtractionRepository> {
-    let pool = connect_pool().await?;
-    let repo = ExtractionRepository::new(pool);
-    repo.migrate().await?;
-    Ok(repo)
-}
-
-/// Connect to PostgreSQL and return the pool (runs migrations).
-async fn connect_pool() -> Result<sqlx::PgPool> {
-    let database_url = std::env::var("DATABASE_URL")
-        .context("DATABASE_URL not set. Required for database operations.")?;
-
-    let pool = sqlx::postgres::PgPoolOptions::new()
-        .max_connections(5)
-        .connect(&database_url)
-        .await
-        .context("Failed to connect to database")?;
-
-    // Run migrations
-    sqlx::migrate!("../../migrations")
-        .run(&pool)
-        .await
-        .context("Migration failed")?;
-
-    Ok(pool)
 }
 
 async fn cmd_history(

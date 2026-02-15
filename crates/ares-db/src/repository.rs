@@ -15,15 +15,6 @@ impl ExtractionRepository {
         Self { pool }
     }
 
-    /// Run pending migrations from the migrations/ directory.
-    pub async fn migrate(&self) -> Result<(), AppError> {
-        sqlx::migrate!("../../migrations")
-            .run(&self.pool)
-            .await
-            .map_err(|e| AppError::DatabaseError(e.to_string()))?;
-        Ok(())
-    }
-
     /// Save a new extraction result. Returns the generated UUID.
     pub async fn save(&self, extraction: &NewExtraction) -> Result<Uuid, AppError> {
         let row: (Uuid,) = sqlx::query_as(

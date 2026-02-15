@@ -23,6 +23,5 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 serde_json.workspace = true
 anyhow.workspace = true
-sqlx.workspace = true
 tokio-util.workspace = true
 uuid.workspace = true
