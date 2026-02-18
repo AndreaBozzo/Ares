@@ -52,6 +52,7 @@ pub trait JobQueue: Send + Sync + Clone {
         limit: usize,
     ) -> impl Future<Output = Result<Vec<ScrapeJob>, AppError>> + Send;
 
+    // TODO(#3): Currently unused — will be needed for per-job release during crawl cancellation
     fn release_job(&self, job_id: Uuid) -> impl Future<Output = Result<(), AppError>> + Send;
 
     /// Release all jobs held by a specific worker (for graceful shutdown).

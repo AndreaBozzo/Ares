@@ -131,6 +131,7 @@ Reference by path (`schemas/blog/1.0.0.json`) or by name (`blog@1.0.0`, `blog@la
 | `ARES_MODEL` | Yes | | LLM model name |
 | `ARES_BASE_URL` | No | `https://api.openai.com/v1` | OpenAI-compatible endpoint |
 | `DATABASE_URL` | For persistence | | PostgreSQL connection string |
+| `DATABASE_MAX_CONNECTIONS` | No | `5` | PostgreSQL connection pool size |
 | `CHROME_BIN` | No | Auto-detected | Override path to Chrome/Chromium binary |
 
 **Gemini** works via the OpenAI-compatible endpoint:

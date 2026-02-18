@@ -195,6 +195,7 @@ where
     }
 
     /// Process a single job. Public for testing purposes.
+    // TODO(#3): After extraction, discover links and enqueue child jobs for crawling
     pub async fn process_job<WR: WorkerReporter>(&self, job: &ScrapeJob, reporter: &WR) {
         reporter.report(WorkerEvent::JobStarted {
             job_id: job.id,

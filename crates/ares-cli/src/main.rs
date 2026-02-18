@@ -15,6 +15,7 @@ use ares_core::worker::{TracingWorkerReporter, WorkerService};
 use ares_core::{NullStore, SchemaResolver, ScrapeService};
 use ares_db::{Database, DatabaseConfig, ExtractionRepository};
 
+// TODO(#2): Extract shared wiring to ares-server for HTTP API
 #[derive(Parser)]
 #[command(name = "ares", version, about = "Industrial Grade AI Scraper")]
 struct Cli {

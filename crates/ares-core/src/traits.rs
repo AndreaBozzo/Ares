@@ -6,6 +6,7 @@ use crate::error::AppError;
 use crate::models::{Extraction, NewExtraction};
 
 /// Fetches raw HTML content from a URL.
+// TODO(#1): Add proxy support via ProxyConfig parameter
 pub trait Fetcher: Send + Sync + Clone {
     fn fetch(&self, url: &str) -> impl Future<Output = Result<String, AppError>> + Send;
 }
@@ -16,6 +17,7 @@ pub trait Cleaner: Send + Sync + Clone {
 }
 
 /// Extracts structured JSON data from text content using an LLM.
+// TODO(#4): Add CandleExtractor impl for local inference
 pub trait Extractor: Send + Sync + Clone {
     /// Sends the content and JSON schema to the LLM and returns extracted JSON.
     fn extract(

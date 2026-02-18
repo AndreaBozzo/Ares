@@ -94,6 +94,7 @@ impl RetryConfig {
 }
 
 /// A scrape job in the queue.
+// TODO(#3): Add parent_job_id, crawl_session_id, depth for crawling
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScrapeJob {
     pub id: Uuid,

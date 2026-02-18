@@ -7,6 +7,8 @@ feature-depth = 1
 
 [advisories]
 ignore = [
+    # rustls-pemfile is unmaintained (archived Aug 2025) — transitive dep via reqwest/hyper.
+    # Migrate to rustls-pki-types PemObject API when upstream updates.
     "RUSTSEC-2025-0134",
 ]
 

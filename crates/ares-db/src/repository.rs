@@ -88,6 +88,7 @@ impl ExtractionRepository {
     }
 
     /// Check database connectivity.
+    // TODO(#2): Expose via CLI command and HTTP /health endpoint
     pub async fn health_check(&self) -> Result<(), AppError> {
         sqlx::query("SELECT 1")
             .execute(&self.pool)
