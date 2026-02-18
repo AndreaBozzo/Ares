@@ -1,9 +1,13 @@
+use std::time::Duration;
+
 use ares_core::error::AppError;
 use ares_core::traits::{Extractor, ExtractorFactory};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
 const DEFAULT_BASE_URL: &str = "https://api.openai.com/v1";
+const DEFAULT_LLM_TIMEOUT: Duration = Duration::from_secs(120);
+const DEFAULT_SYSTEM_PROMPT: &str = "You are a data extraction assistant. Extract the requested fields from the provided web content. Respond ONLY with valid JSON matching the requested schema. Do not include explanations.";
 
 /// OpenAI-compatible LLM client for structured extraction.
 ///
@@ -16,6 +20,8 @@ pub struct OpenAiExtractor {
     base_url: String,
     api_key: String,
     model: String,
+    timeout_secs: u64,
+    system_prompt: String,
 }
 
 impl OpenAiExtractor {
@@ -24,8 +30,26 @@ impl OpenAiExtractor {
     }
 
     pub fn with_base_url(api_key: &str, model: &str, base_url: &str) -> Result<Self, AppError> {
+        Self::build(api_key, model, base_url, DEFAULT_LLM_TIMEOUT)
+    }
+
+    pub fn with_timeout(self, timeout: Duration) -> Result<Self, AppError> {
+        Self::build(&self.api_key, &self.model, &self.base_url, timeout)
+    }
+
+    pub fn with_system_prompt(mut self, prompt: impl Into<String>) -> Self {
+        self.system_prompt = prompt.into();
+        self
+    }
+
+    fn build(
+        api_key: &str,
+        model: &str,
+        base_url: &str,
+        timeout: Duration,
+    ) -> Result<Self, AppError> {
         let client = Client::builder()
-            .timeout(std::time::Duration::from_secs(120))
+            .timeout(timeout)
             .build()
             .map_err(|e| AppError::HttpError(e.to_string()))?;
 
@@ -34,6 +58,8 @@ impl OpenAiExtractor {
             base_url: base_url.trim_end_matches('/').to_string(),
             api_key: api_key.to_string(),
             model: model.to_string(),
+            timeout_secs: timeout.as_secs(),
+            system_prompt: DEFAULT_SYSTEM_PROMPT.to_string(),
         })
     }
 }
@@ -107,7 +133,7 @@ impl Extractor for OpenAiExtractor {
             messages: vec![
                 Message {
                     role: "system".to_string(),
-                    content: "You are a data extraction assistant. Extract the requested fields from the provided web content. Respond ONLY with valid JSON matching the requested schema. Do not include explanations.".to_string(),
+                    content: self.system_prompt.clone(),
                 },
                 Message {
                     role: "user".to_string(),
@@ -137,7 +163,7 @@ impl Extractor for OpenAiExtractor {
             .await
             .map_err(|e| {
                 if e.is_timeout() {
-                    AppError::Timeout(120)
+                    AppError::Timeout(self.timeout_secs)
                 } else if e.is_connect() {
                     AppError::NetworkError(format!("Connection failed: {}", e))
                 } else {
@@ -198,13 +224,27 @@ impl Extractor for OpenAiExtractor {
 #[derive(Clone)]
 pub struct OpenAiExtractorFactory {
     api_key: String,
+    llm_timeout: Option<Duration>,
+    system_prompt: Option<String>,
 }
 
 impl OpenAiExtractorFactory {
     pub fn new(api_key: impl Into<String>) -> Self {
         Self {
             api_key: api_key.into(),
+            llm_timeout: None,
+            system_prompt: None,
         }
+    }
+
+    pub fn with_llm_timeout(mut self, timeout: Duration) -> Self {
+        self.llm_timeout = Some(timeout);
+        self
+    }
+
+    pub fn with_system_prompt(mut self, prompt: impl Into<String>) -> Self {
+        self.system_prompt = Some(prompt.into());
+        self
     }
 }
 
@@ -212,6 +252,15 @@ impl ExtractorFactory for OpenAiExtractorFactory {
     type Extractor = OpenAiExtractor;
 
     fn create(&self, model: &str, base_url: &str) -> Result<OpenAiExtractor, AppError> {
-        OpenAiExtractor::with_base_url(&self.api_key, model, base_url)
+        let extractor = OpenAiExtractor::with_base_url(&self.api_key, model, base_url)?;
+        let extractor = match self.llm_timeout {
+            Some(t) => extractor.with_timeout(t)?,
+            None => extractor,
+        };
+        let extractor = match &self.system_prompt {
+            Some(p) => extractor.with_system_prompt(p.clone()),
+            None => extractor,
+        };
+        Ok(extractor)
     }
 }

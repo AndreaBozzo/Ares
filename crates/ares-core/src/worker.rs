@@ -223,7 +223,8 @@ where
             extractor,
             self.store.clone(),
             job.model.clone(),
-        );
+        )
+        .with_skip_unchanged(self.config.skip_unchanged);
 
         // Wrap in circuit breaker
         let result = self
@@ -298,6 +299,7 @@ mod tests {
             worker_id: "test-worker".into(),
             poll_interval: Duration::from_millis(10),
             retry_config: RetryConfig::default(),
+            skip_unchanged: false,
         }
     }
 
