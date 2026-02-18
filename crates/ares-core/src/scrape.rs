@@ -18,6 +18,7 @@ where
     extractor: E,
     store: Option<S>,
     model_name: String,
+    skip_unchanged: bool,
 }
 
 impl<F, C, E, S> ScrapeService<F, C, E, S>
@@ -35,6 +36,7 @@ where
             extractor,
             store: None,
             model_name,
+            skip_unchanged: false,
         }
     }
 
@@ -46,7 +48,14 @@ where
             extractor,
             store: Some(store),
             model_name,
+            skip_unchanged: false,
         }
+    }
+
+    /// When enabled, skip saving if the data hash matches the previous extraction.
+    pub fn with_skip_unchanged(mut self, skip: bool) -> Self {
+        self.skip_unchanged = skip;
+        self
     }
 
     /// Run the full scrape pipeline for a URL + schema.
@@ -101,28 +110,34 @@ where
                 None => true,
             };
 
-            let new_extraction = NewExtraction {
-                url: url.to_string(),
-                schema_name: schema_name.to_string(),
-                extracted_data: extracted.clone(),
-                raw_content_hash: content_hash.clone(),
-                data_hash: data_hash.clone(),
-                model: self.model_name.clone(),
-            };
-
-            let id = store.save(&new_extraction).await?;
-
-            if changed {
-                if previous.is_some() {
-                    tracing::info!(%id, "Data CHANGED — saved new extraction");
-                } else {
-                    tracing::info!(%id, "First extraction — saved");
-                }
+            if self.skip_unchanged && !changed {
+                let prev_id = previous.map(|p| p.id);
+                tracing::info!(?prev_id, "Data unchanged — skipping save");
+                (false, prev_id)
             } else {
-                tracing::info!(%id, "Data unchanged — saved snapshot");
-            }
+                let new_extraction = NewExtraction {
+                    url: url.to_string(),
+                    schema_name: schema_name.to_string(),
+                    extracted_data: extracted.clone(),
+                    raw_content_hash: content_hash.clone(),
+                    data_hash: data_hash.clone(),
+                    model: self.model_name.clone(),
+                };
 
-            (changed, Some(id))
+                let id = store.save(&new_extraction).await?;
+
+                if changed {
+                    if previous.is_some() {
+                        tracing::info!(%id, "Data CHANGED — saved new extraction");
+                    } else {
+                        tracing::info!(%id, "First extraction — saved");
+                    }
+                } else {
+                    tracing::info!(%id, "Data unchanged — saved snapshot");
+                }
+
+                (changed, Some(id))
+            }
         } else {
             (true, None)
         };
@@ -292,6 +307,59 @@ mod tests {
             .unwrap_err();
 
         assert!(matches!(err, AppError::LlmError { .. }));
+    }
+
+    #[tokio::test]
+    async fn skip_unchanged_skips_save() {
+        let extracted = serde_json::json!({"title": "Hello"});
+        let data_hash = compute_hash(&extracted.to_string());
+        let prev = make_test_extraction(&data_hash);
+        let prev_id = prev.id;
+        let store = MockStore::with_latest(prev);
+
+        let svc = ScrapeService::with_store(
+            MockFetcher::new("<html>hello</html>"),
+            MockCleaner::passthrough(),
+            MockExtractor::new(extracted),
+            store.clone(),
+            "test-model".into(),
+        )
+        .with_skip_unchanged(true);
+
+        let result = svc
+            .scrape("https://example.com", &test_schema(), "test")
+            .await
+            .unwrap();
+
+        assert!(!result.changed);
+        assert_eq!(result.extraction_id, Some(prev_id));
+        assert_eq!(store.saved.lock().unwrap().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn skip_unchanged_false_still_saves_snapshot() {
+        let extracted = serde_json::json!({"title": "Hello"});
+        let data_hash = compute_hash(&extracted.to_string());
+        let prev = make_test_extraction(&data_hash);
+        let store = MockStore::with_latest(prev);
+
+        let svc = ScrapeService::with_store(
+            MockFetcher::new("<html>hello</html>"),
+            MockCleaner::passthrough(),
+            MockExtractor::new(extracted),
+            store.clone(),
+            "test-model".into(),
+        )
+        .with_skip_unchanged(false);
+
+        let result = svc
+            .scrape("https://example.com", &test_schema(), "test")
+            .await
+            .unwrap();
+
+        assert!(!result.changed);
+        assert!(result.extraction_id.is_some());
+        assert_eq!(store.saved.lock().unwrap().len(), 1);
     }
 
     #[tokio::test]

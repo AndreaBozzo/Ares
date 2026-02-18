@@ -167,6 +167,7 @@ pub struct WorkerConfig {
     pub worker_id: String,
     pub poll_interval: Duration,
     pub retry_config: RetryConfig,
+    pub skip_unchanged: bool,
 }
 
 impl Default for WorkerConfig {
@@ -175,6 +176,7 @@ impl Default for WorkerConfig {
             worker_id: format!("worker-{}", &Uuid::new_v4().to_string()[..8]),
             poll_interval: Duration::from_secs(5),
             retry_config: RetryConfig::default(),
+            skip_unchanged: false,
         }
     }
 }
@@ -187,6 +189,11 @@ impl WorkerConfig {
 
     pub fn with_poll_interval(mut self, interval: Duration) -> Self {
         self.poll_interval = interval;
+        self
+    }
+
+    pub fn with_skip_unchanged(mut self, skip: bool) -> Self {
+        self.skip_unchanged = skip;
         self
     }
 }

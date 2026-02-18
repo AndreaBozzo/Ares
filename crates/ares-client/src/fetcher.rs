@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use ares_core::error::AppError;
 use ares_core::traits::Fetcher;
 use reqwest::Client;
@@ -8,17 +10,26 @@ use reqwest::Client;
 #[derive(Clone)]
 pub struct ReqwestFetcher {
     client: Client,
+    timeout_secs: u64,
 }
 
 impl ReqwestFetcher {
     pub fn new() -> Result<Self, AppError> {
+        Self::with_timeout(Duration::from_secs(30))
+    }
+
+    pub fn with_timeout(timeout: Duration) -> Result<Self, AppError> {
+        let timeout_secs = timeout.as_secs();
         let client = Client::builder()
             .user_agent("Ares/0.1 (AI Scraper)")
-            .timeout(std::time::Duration::from_secs(30))
+            .timeout(timeout)
             .build()
             .map_err(|e| AppError::HttpError(e.to_string()))?;
 
-        Ok(Self { client })
+        Ok(Self {
+            client,
+            timeout_secs,
+        })
     }
 }
 
@@ -32,7 +43,7 @@ impl Fetcher for ReqwestFetcher {
     async fn fetch(&self, url: &str) -> Result<String, AppError> {
         let response = self.client.get(url).send().await.map_err(|e| {
             if e.is_timeout() {
-                AppError::Timeout(30)
+                AppError::Timeout(self.timeout_secs)
             } else if e.is_connect() {
                 AppError::NetworkError(format!("Connection failed: {}", e))
             } else {

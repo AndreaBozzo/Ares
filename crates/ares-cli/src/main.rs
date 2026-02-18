@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use tokio_util::sync::CancellationToken;
@@ -60,6 +62,22 @@ enum Commands {
         /// Use headless browser for JS-rendered pages (requires `browser` feature)
         #[arg(long, default_value_t = false)]
         browser: bool,
+
+        /// HTTP fetch timeout in seconds (default: 30)
+        #[arg(long)]
+        fetch_timeout: Option<u64>,
+
+        /// LLM API timeout in seconds (default: 120)
+        #[arg(long)]
+        llm_timeout: Option<u64>,
+
+        /// Custom system prompt for LLM extraction
+        #[arg(long)]
+        system_prompt: Option<String>,
+
+        /// Skip saving when extracted data hasn't changed (requires --save)
+        #[arg(long, default_value_t = false)]
+        skip_unchanged: bool,
     },
 
     /// Show extraction history for a URL
@@ -100,6 +118,22 @@ enum Commands {
         /// Use headless browser for JS-rendered pages (requires `browser` feature)
         #[arg(long, default_value_t = false)]
         browser: bool,
+
+        /// HTTP fetch timeout in seconds (default: 30)
+        #[arg(long)]
+        fetch_timeout: Option<u64>,
+
+        /// LLM API timeout in seconds (default: 120)
+        #[arg(long)]
+        llm_timeout: Option<u64>,
+
+        /// Custom system prompt for LLM extraction
+        #[arg(long)]
+        system_prompt: Option<String>,
+
+        /// Skip saving when extracted data hasn't changed
+        #[arg(long, default_value_t = false)]
+        skip_unchanged: bool,
     },
 }
 
@@ -181,41 +215,39 @@ async fn main() -> Result<()> {
             save,
             schema_name,
             browser,
+            fetch_timeout,
+            llm_timeout,
+            system_prompt,
+            skip_unchanged,
         } => {
             let resolved = SchemaResolver::new("schemas").resolve(&schema)?;
             let schema_name = schema_name.unwrap_or(resolved.name);
             let schema_value = resolved.schema;
 
+            let opts = ScrapeOpts {
+                url: &url,
+                schema_value,
+                schema_name: &schema_name,
+                model: &model,
+                base_url: &base_url,
+                api_key: &api_key,
+                save,
+                fetch_timeout: fetch_timeout.map(Duration::from_secs),
+                llm_timeout: llm_timeout.map(Duration::from_secs),
+                system_prompt: system_prompt.as_deref(),
+                skip_unchanged,
+            };
+
             if browser {
                 let fetcher = create_browser_fetcher().await?;
-                cmd_scrape(
-                    fetcher,
-                    ScrapeOpts {
-                        url: &url,
-                        schema_value,
-                        schema_name: &schema_name,
-                        model: &model,
-                        base_url: &base_url,
-                        api_key: &api_key,
-                        save,
-                    },
-                )
-                .await?;
+                cmd_scrape(fetcher, opts).await?;
             } else {
-                let fetcher = ReqwestFetcher::new().context("Failed to create HTTP client")?;
-                cmd_scrape(
-                    fetcher,
-                    ScrapeOpts {
-                        url: &url,
-                        schema_value,
-                        schema_name: &schema_name,
-                        model: &model,
-                        base_url: &base_url,
-                        api_key: &api_key,
-                        save,
-                    },
-                )
-                .await?;
+                let fetcher = match opts.fetch_timeout {
+                    Some(t) => ReqwestFetcher::with_timeout(t),
+                    None => ReqwestFetcher::new(),
+                }
+                .context("Failed to create HTTP client")?;
+                cmd_scrape(fetcher, opts).await?;
             }
         }
 
@@ -345,13 +377,31 @@ async fn main() -> Result<()> {
             poll_interval,
             api_key,
             browser,
+            fetch_timeout,
+            llm_timeout,
+            system_prompt,
+            skip_unchanged,
         } => {
+            let worker_opts = WorkerOpts {
+                api_key: &api_key,
+                worker_id,
+                poll_interval,
+                fetch_timeout: fetch_timeout.map(Duration::from_secs),
+                llm_timeout: llm_timeout.map(Duration::from_secs),
+                system_prompt: system_prompt.as_deref(),
+                skip_unchanged,
+            };
+
             if browser {
                 let fetcher = create_browser_fetcher().await?;
-                cmd_worker(fetcher, &api_key, worker_id, poll_interval).await?;
+                cmd_worker(fetcher, worker_opts).await?;
             } else {
-                let fetcher = ReqwestFetcher::new().context("Failed to create HTTP client")?;
-                cmd_worker(fetcher, &api_key, worker_id, poll_interval).await?;
+                let fetcher = match worker_opts.fetch_timeout {
+                    Some(t) => ReqwestFetcher::with_timeout(t),
+                    None => ReqwestFetcher::new(),
+                }
+                .context("Failed to create HTTP client")?;
+                cmd_worker(fetcher, worker_opts).await?;
             }
         }
     }
@@ -373,19 +423,30 @@ struct ScrapeOpts<'a> {
     base_url: &'a str,
     api_key: &'a str,
     save: bool,
+    fetch_timeout: Option<Duration>,
+    llm_timeout: Option<Duration>,
+    system_prompt: Option<&'a str>,
+    skip_unchanged: bool,
 }
 
 /// One-shot scrape: fetch → clean → extract → (optionally) persist.
 async fn cmd_scrape<F: Fetcher>(fetcher: F, opts: ScrapeOpts<'_>) -> Result<()> {
     let cleaner = HtmdCleaner::new();
-    let extractor = OpenAiExtractor::with_base_url(opts.api_key, opts.model, opts.base_url)?;
+    let mut extractor = OpenAiExtractor::with_base_url(opts.api_key, opts.model, opts.base_url)?;
+    if let Some(t) = opts.llm_timeout {
+        extractor = extractor.with_timeout(t)?;
+    }
+    if let Some(p) = opts.system_prompt {
+        extractor = extractor.with_system_prompt(p);
+    }
 
     let result = if opts.save {
         let db = Database::connect(&DatabaseConfig::from_env()?).await?;
         db.migrate().await?;
         let repo = db.extraction_repo();
         let service =
-            ScrapeService::with_store(fetcher, cleaner, extractor, repo, opts.model.to_string());
+            ScrapeService::with_store(fetcher, cleaner, extractor, repo, opts.model.to_string())
+                .with_skip_unchanged(opts.skip_unchanged);
         service
             .scrape(opts.url, &opts.schema_value, opts.schema_name)
             .await?
@@ -406,28 +467,41 @@ async fn cmd_scrape<F: Fetcher>(fetcher: F, opts: ScrapeOpts<'_>) -> Result<()> 
     Ok(())
 }
 
-/// Long-running worker: poll job queue → circuit breaker → scrape → persist.
-async fn cmd_worker<F: Fetcher>(
-    fetcher: F,
-    api_key: &str,
+/// Options for the worker command.
+struct WorkerOpts<'a> {
+    api_key: &'a str,
     worker_id: Option<String>,
     poll_interval: u64,
-) -> Result<()> {
+    fetch_timeout: Option<Duration>,
+    llm_timeout: Option<Duration>,
+    system_prompt: Option<&'a str>,
+    skip_unchanged: bool,
+}
+
+/// Long-running worker: poll job queue → circuit breaker → scrape → persist.
+async fn cmd_worker<F: Fetcher>(fetcher: F, opts: WorkerOpts<'_>) -> Result<()> {
     let db = Database::connect(&DatabaseConfig::from_env()?).await?;
     db.migrate().await?;
     let job_repo = db.job_repo();
     let extraction_repo = db.extraction_repo();
 
-    let config =
-        WorkerConfig::default().with_poll_interval(std::time::Duration::from_secs(poll_interval));
-    let config = if let Some(id) = worker_id {
+    let config = WorkerConfig::default()
+        .with_poll_interval(Duration::from_secs(opts.poll_interval))
+        .with_skip_unchanged(opts.skip_unchanged);
+    let config = if let Some(id) = opts.worker_id {
         config.with_worker_id(id)
     } else {
         config
     };
 
     let cleaner = HtmdCleaner::new();
-    let extractor_factory = OpenAiExtractorFactory::new(api_key);
+    let mut extractor_factory = OpenAiExtractorFactory::new(opts.api_key);
+    if let Some(t) = opts.llm_timeout {
+        extractor_factory = extractor_factory.with_llm_timeout(t);
+    }
+    if let Some(p) = opts.system_prompt {
+        extractor_factory = extractor_factory.with_system_prompt(p);
+    }
     let cb = CircuitBreaker::new("llm", CircuitBreakerConfig::default());
 
     let worker = WorkerService::new(
