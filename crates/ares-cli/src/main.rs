@@ -239,7 +239,7 @@ async fn main() -> Result<()> {
             };
 
             if browser {
-                let fetcher = create_browser_fetcher().await?;
+                let fetcher = create_browser_fetcher(opts.fetch_timeout).await?;
                 cmd_scrape(fetcher, opts).await?;
             } else {
                 let fetcher = match opts.fetch_timeout {
@@ -393,7 +393,7 @@ async fn main() -> Result<()> {
             };
 
             if browser {
-                let fetcher = create_browser_fetcher().await?;
+                let fetcher = create_browser_fetcher(worker_opts.fetch_timeout).await?;
                 cmd_worker(fetcher, worker_opts).await?;
             } else {
                 let fetcher = match worker_opts.fetch_timeout {
@@ -533,12 +533,15 @@ async fn cmd_worker<F: Fetcher>(fetcher: F, opts: WorkerOpts<'_>) -> Result<()> 
 // ---------------------------------------------------------------------------
 
 #[cfg(feature = "browser")]
-async fn create_browser_fetcher() -> Result<ares_client::BrowserFetcher> {
-    Ok(ares_client::BrowserFetcher::new().await?)
+async fn create_browser_fetcher(timeout: Option<Duration>) -> Result<ares_client::BrowserFetcher> {
+    Ok(match timeout {
+        Some(t) => ares_client::BrowserFetcher::with_timeout(t).await?,
+        None => ares_client::BrowserFetcher::new().await?,
+    })
 }
 
 #[cfg(not(feature = "browser"))]
-async fn create_browser_fetcher() -> Result<ReqwestFetcher> {
+async fn create_browser_fetcher(_timeout: Option<Duration>) -> Result<ReqwestFetcher> {
     anyhow::bail!(
         "--browser requires the `browser` feature.\n\
          Rebuild with: cargo build --features browser"
