@@ -8,6 +8,17 @@ use axum::response::{IntoResponse, Response};
 use crate::dto::ErrorResponse;
 use crate::state::AppState;
 
+/// Constant-time byte comparison to prevent timing attacks on API key validation.
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    a.iter()
+        .zip(b.iter())
+        .fold(0u8, |acc, (x, y)| acc | (x ^ y))
+        == 0
+}
+
 /// Middleware that validates `Authorization: Bearer <token>` against the configured API key.
 pub async fn require_api_key(
     State(state): State<Arc<AppState>>,
@@ -22,7 +33,7 @@ pub async fn require_api_key(
     let authenticated = match auth_header {
         Some(header) => header
             .strip_prefix("Bearer ")
-            .is_some_and(|token| token == state.api_key),
+            .is_some_and(|token| constant_time_eq(token.as_bytes(), state.api_key.as_bytes())),
         None => false,
     };
 
