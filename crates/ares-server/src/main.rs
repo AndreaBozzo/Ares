@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
+use axum::http::HeaderValue;
 use tokio::net::TcpListener;
-use tower_http::cors::CorsLayer;
+use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::trace::TraceLayer;
 use tracing_subscriber::EnvFilter;
 
@@ -27,9 +28,21 @@ async fn main() -> anyhow::Result<()> {
 
     let state = Arc::new(AppState { db, api_key });
 
+    let cors = match std::env::var("ARES_CORS_ORIGIN") {
+        Ok(origin) if origin == "*" => CorsLayer::permissive(),
+        Ok(origin) => {
+            let origins: Vec<HeaderValue> = origin
+                .split(',')
+                .filter_map(|o| o.trim().parse().ok())
+                .collect();
+            CorsLayer::new().allow_origin(AllowOrigin::list(origins))
+        }
+        Err(_) => CorsLayer::new(),
+    };
+
     let app = routes::router(state)
         .layer(TraceLayer::new_for_http())
-        .layer(CorsLayer::permissive());
+        .layer(cors);
 
     tracing::info!("Starting server on {addr}");
     let listener = TcpListener::bind(&addr).await?;

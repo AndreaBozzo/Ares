@@ -75,11 +75,11 @@ async fn list_jobs(
         .status
         .map(|s| {
             s.parse()
-                .map_err(|e: String| ares_core::error::AppError::Generic(e))
+                .map_err(|e: String| ares_core::error::AppError::SchemaValidationError(e))
         })
         .transpose()?;
 
-    let limit = query.limit.unwrap_or(20);
+    let limit = query.limit.unwrap_or(20).min(100);
     let jobs = state.db.job_repo().list_jobs(status_filter, limit).await?;
     let total = jobs.len();
 
@@ -141,7 +141,7 @@ async fn get_extractions(
     State(state): State<Arc<AppState>>,
     Query(query): Query<ExtractionHistoryQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let limit = query.limit.unwrap_or(10);
+    let limit = query.limit.unwrap_or(10).min(100);
     let extractions = state
         .db
         .extraction_repo()

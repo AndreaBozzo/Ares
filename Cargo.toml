@@ -4,7 +4,8 @@ members = [
     "crates/ares-core",
     "crates/ares-client",
     "crates/ares-db",
-    "crates/ares-cli", "crates/ares-server",
+    "crates/ares-cli",
+    "crates/ares-server",
 ]
 
 [workspace.package]

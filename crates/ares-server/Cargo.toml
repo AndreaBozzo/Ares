@@ -36,3 +36,10 @@ chrono.workspace = true
 
 # Env
 dotenvy.workspace = true
+
+[dev-dependencies]
+testcontainers = "0.26"
+tower = { workspace = true, features = ["util"] }
+axum = { workspace = true, features = ["macros"] }
+http-body-util = "0.1"
+sqlx.workspace = true
