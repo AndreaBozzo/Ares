@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/logoares.png" alt="Ares" width="600">
+  <img src="docs/assets/logoares.png" alt="Ares" width="800">
 </p>
 
 <h1 align="center">Ares</h1>
