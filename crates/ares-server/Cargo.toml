@@ -38,6 +38,9 @@ tracing-subscriber.workspace = true
 uuid.workspace = true
 chrono.workspace = true
 
+# Security
+subtle = "2"
+
 # Env
 dotenvy.workspace = true
 

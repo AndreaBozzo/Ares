@@ -30,6 +30,28 @@ use utoipa::OpenApi;
         (name = "extractions", description = "Extraction history"),
         (name = "system", description = "Health and system status"),
     ),
-    security(("bearer" = []))
+    modifiers(&SecurityAddon)
 )]
 pub struct ApiDoc;
+
+/// Adds Bearer token security scheme to the OpenAPI spec.
+struct SecurityAddon;
+
+impl utoipa::Modify for SecurityAddon {
+    fn modify(&self, openapi: &mut utoipa::openapi::OpenApi) {
+        if let Some(components) = openapi.components.as_mut() {
+            components.add_security_scheme(
+                "bearer",
+                utoipa::openapi::security::SecurityScheme::Http(
+                    utoipa::openapi::security::HttpBuilder::new()
+                        .scheme(utoipa::openapi::security::HttpAuthScheme::Bearer)
+                        .bearer_format("token")
+                        .description(Some(
+                            "Admin API key. Set via ARES_ADMIN_TOKEN environment variable.",
+                        ))
+                        .build(),
+                ),
+            );
+        }
+    }
+}

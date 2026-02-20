@@ -19,14 +19,20 @@ async fn main() -> anyhow::Result<()> {
         .with_target(false)
         .init();
 
-    let api_key = std::env::var("ARES_SERVER_API_KEY").expect("ARES_SERVER_API_KEY must be set");
+    let admin_token = std::env::var("ARES_ADMIN_TOKEN").ok();
     let port = std::env::var("ARES_SERVER_PORT").unwrap_or_else(|_| "3000".to_string());
     let addr = format!("0.0.0.0:{port}");
 
     let db = Database::connect(&DatabaseConfig::from_env()?).await?;
     db.migrate().await?;
 
-    let state = Arc::new(AppState { db, api_key });
+    if admin_token.is_some() {
+        tracing::info!("Admin authentication: enabled");
+    } else {
+        tracing::info!("Admin authentication: disabled (set ARES_ADMIN_TOKEN to enable)");
+    }
+
+    let state = Arc::new(AppState { db, admin_token });
 
     let cors = match std::env::var("ARES_CORS_ORIGIN") {
         Ok(origin) if origin == "*" => CorsLayer::permissive(),

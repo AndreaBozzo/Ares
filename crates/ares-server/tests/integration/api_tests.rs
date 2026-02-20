@@ -3,7 +3,7 @@ use axum::http::{Request, StatusCode};
 use http_body_util::BodyExt;
 use tower::ServiceExt;
 
-use crate::integration::common::{TEST_API_KEY, setup_test_app};
+use crate::integration::common::{TEST_API_KEY, setup_test_app, setup_test_app_no_auth};
 
 #[tokio::test]
 async fn health_returns_200() {
@@ -49,6 +49,27 @@ async fn wrong_api_key_returns_401() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn no_admin_token_returns_403() {
+    let (app, _container) = setup_test_app_no_auth().await;
+
+    let response = app
+        .oneshot(
+            Request::get("/v1/jobs")
+                .header("authorization", "Bearer any-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["error"], "forbidden");
 }
 
 #[tokio::test]
