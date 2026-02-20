@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/logoares.png" alt="Ares" width="600">
+  <img src="docs/assets/logoares.png" alt="Ares" width="800">
 </p>
 
 <h1 align="center">Ares</h1>
@@ -10,7 +10,7 @@
 
 <p align="center">
   <a href="https://github.com/AndreaBozzo/Ares/actions/workflows/ci.yml"><img src="https://github.com/AndreaBozzo/Ares/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <a href="https://discord.gg/UyCzNVVk"><img src="https://img.shields.io/discord/1469399961987711161?color=5865F2&logo=discord&logoColor=white&label=Discord" alt="Discord"></a>
+  <a href="https://discord.gg/fztdKSPXSz"><img src="https://img.shields.io/discord/1469399961987711161?color=5865F2&logo=discord&logoColor=white&label=Discord" alt="Discord"></a>
 </p>
 
 ---
