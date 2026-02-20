@@ -6,6 +6,8 @@ use axum::http::StatusCode;
 use axum::middleware;
 use axum::response::IntoResponse;
 use axum::routing::{delete, get, post};
+use utoipa::OpenApi;
+use utoipa_swagger_ui::SwaggerUi;
 use uuid::Uuid;
 
 use ares_core::job::CreateScrapeJobRequest;
@@ -17,6 +19,7 @@ use crate::dto::{
     ExtractionResponse, HealthResponse, JobListResponse, JobResponse, ListJobsQuery,
 };
 use crate::error::ApiError;
+use crate::openapi::ApiDoc;
 use crate::state::AppState;
 
 /// Build the full router with all routes and middleware.
@@ -32,7 +35,9 @@ pub fn router(state: Arc<AppState>) -> Router {
             require_api_key,
         ));
 
-    let public = Router::new().route("/health", get(health));
+    let public = Router::new()
+        .route("/health", get(health))
+        .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", ApiDoc::openapi()));
 
     public.merge(api).with_state(state)
 }
@@ -41,7 +46,18 @@ pub fn router(state: Arc<AppState>) -> Router {
 // Handlers
 // ---------------------------------------------------------------------------
 
-async fn create_job(
+#[utoipa::path(
+    post,
+    path = "/v1/jobs",
+    request_body = CreateJobRequest,
+    responses(
+        (status = 202, description = "Job created", body = CreateJobResponse),
+        (status = 401, description = "Unauthorized"),
+    ),
+    security(("bearer" = [])),
+    tag = "jobs"
+)]
+pub async fn create_job(
     State(state): State<Arc<AppState>>,
     axum::Json(body): axum::Json<CreateJobRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
@@ -67,7 +83,18 @@ async fn create_job(
     Ok((StatusCode::ACCEPTED, axum::Json(response)))
 }
 
-async fn list_jobs(
+#[utoipa::path(
+    get,
+    path = "/v1/jobs",
+    params(ListJobsQuery),
+    responses(
+        (status = 200, description = "List of jobs", body = JobListResponse),
+        (status = 401, description = "Unauthorized"),
+    ),
+    security(("bearer" = [])),
+    tag = "jobs"
+)]
+pub async fn list_jobs(
     State(state): State<Arc<AppState>>,
     Query(query): Query<ListJobsQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
@@ -91,7 +118,21 @@ async fn list_jobs(
     Ok(axum::Json(response))
 }
 
-async fn get_job(
+#[utoipa::path(
+    get,
+    path = "/v1/jobs/{id}",
+    params(
+        ("id" = Uuid, Path, description = "Job ID")
+    ),
+    responses(
+        (status = 200, description = "Job details", body = JobResponse),
+        (status = 404, description = "Not found", body = crate::dto::ErrorResponse),
+        (status = 401, description = "Unauthorized"),
+    ),
+    security(("bearer" = [])),
+    tag = "jobs"
+)]
+pub async fn get_job(
     State(state): State<Arc<AppState>>,
     Path(id): Path<Uuid>,
 ) -> Result<impl IntoResponse, ApiError> {
@@ -109,7 +150,22 @@ async fn get_job(
     }
 }
 
-async fn cancel_job(
+#[utoipa::path(
+    delete,
+    path = "/v1/jobs/{id}",
+    params(
+        ("id" = Uuid, Path, description = "Job ID")
+    ),
+    responses(
+        (status = 204, description = "Job cancelled"),
+        (status = 404, description = "Not found", body = crate::dto::ErrorResponse),
+        (status = 409, description = "Conflict", body = crate::dto::ErrorResponse),
+        (status = 401, description = "Unauthorized"),
+    ),
+    security(("bearer" = [])),
+    tag = "jobs"
+)]
+pub async fn cancel_job(
     State(state): State<Arc<AppState>>,
     Path(id): Path<Uuid>,
 ) -> Result<impl IntoResponse, ApiError> {
@@ -137,7 +193,18 @@ async fn cancel_job(
     }
 }
 
-async fn get_extractions(
+#[utoipa::path(
+    get,
+    path = "/v1/extractions",
+    params(ExtractionHistoryQuery),
+    responses(
+        (status = 200, description = "Extraction history", body = ExtractionHistoryResponse),
+        (status = 401, description = "Unauthorized"),
+    ),
+    security(("bearer" = [])),
+    tag = "extractions"
+)]
+pub async fn get_extractions(
     State(state): State<Arc<AppState>>,
     Query(query): Query<ExtractionHistoryQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
@@ -160,7 +227,16 @@ async fn get_extractions(
     Ok(axum::Json(response))
 }
 
-async fn health(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+#[utoipa::path(
+    get,
+    path = "/health",
+    responses(
+        (status = 200, description = "Service is healthy", body = HealthResponse),
+        (status = 503, description = "Service is unhealthy", body = HealthResponse),
+    ),
+    tag = "system"
+)]
+pub async fn health(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let db_status = match state.db.extraction_repo().health_check().await {
         Ok(()) => "ok",
         Err(_) => "error",

@@ -11,6 +11,10 @@ axum.workspace = true
 tower.workspace = true
 tower-http.workspace = true
 
+# OpenAPI
+utoipa.workspace = true
+utoipa-swagger-ui.workspace = true
+
 # Internal crates
 ares-core.workspace = true
 ares-db.workspace = true

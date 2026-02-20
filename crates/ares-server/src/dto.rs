@@ -9,7 +9,7 @@ use ares_core::models::Extraction;
 // Jobs
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct CreateJobRequest {
     pub url: String,
     pub schema_name: String,
@@ -19,13 +19,13 @@ pub struct CreateJobRequest {
     pub max_retries: Option<u32>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct CreateJobResponse {
     pub job_id: Uuid,
     pub status: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct JobResponse {
     pub id: Uuid,
     pub url: String,
@@ -70,13 +70,13 @@ impl From<ScrapeJob> for JobResponse {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
 pub struct ListJobsQuery {
     pub status: Option<String>,
     pub limit: Option<usize>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct JobListResponse {
     pub jobs: Vec<JobResponse>,
     pub total: usize,
@@ -86,14 +86,14 @@ pub struct JobListResponse {
 // Extractions
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
 pub struct ExtractionHistoryQuery {
     pub url: String,
     pub schema_name: String,
     pub limit: Option<usize>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ExtractionResponse {
     pub id: Uuid,
     pub url: String,
@@ -120,7 +120,7 @@ impl From<Extraction> for ExtractionResponse {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ExtractionHistoryResponse {
     pub extractions: Vec<ExtractionResponse>,
     pub total: usize,
@@ -130,7 +130,7 @@ pub struct ExtractionHistoryResponse {
 // Health
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct HealthResponse {
     pub status: &'static str,
     pub database: &'static str,
@@ -140,7 +140,7 @@ pub struct HealthResponse {
 // Errors
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ErrorResponse {
     pub error: String,
     pub message: String,
