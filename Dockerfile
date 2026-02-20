@@ -1,4 +1,4 @@
-FROM rust:1.84-bookworm AS builder
+FROM rust:1.88-bookworm AS builder
 WORKDIR /app
 COPY . .
 RUN cargo build --release --bin ares-server
