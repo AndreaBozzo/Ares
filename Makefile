@@ -4,7 +4,7 @@
 -include .env
 export
 
-.PHONY: help build release test test-unit test-integration fmt fmt-check clippy clean docker-up docker-down migrate all
+.PHONY: help build release test test-unit test-integration fmt fmt-check clippy clean docker-build docker-up docker-down migrate all
 
 help: ## Show this help message
 	@echo 'Usage: make [target]'
@@ -38,6 +38,9 @@ clippy: ## Run clippy lints
 
 clean: ## Clean build artifacts
 	cargo clean
+
+docker-build: ## Build the Docker image
+	docker build -t ares-server:latest .
 
 docker-up: ## Start PostgreSQL with docker compose
 	docker compose up -d
