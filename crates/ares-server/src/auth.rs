@@ -25,7 +25,8 @@ pub async fn require_api_key(
         None => {
             let body = ErrorResponse {
                 error: "forbidden".to_string(),
-                message: "Admin endpoints are disabled (no ARES_ADMIN_TOKEN configured)".to_string(),
+                message: "Admin endpoints are disabled (no ARES_ADMIN_TOKEN configured)"
+                    .to_string(),
             };
             return (StatusCode::FORBIDDEN, axum::Json(body)).into_response();
         }
