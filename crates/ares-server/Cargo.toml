@@ -45,6 +45,9 @@ subtle = "2"
 # Env
 dotenvy.workspace = true
 
+# Rate limiting
+tower_governor = "0.8"
+
 [dev-dependencies]
 testcontainers = "0.26"
 tempfile = "3"

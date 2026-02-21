@@ -1,9 +1,13 @@
+use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::http::HeaderValue;
 use tokio::net::TcpListener;
+use tower_governor::{GovernorLayer, governor::GovernorConfigBuilder};
 use tower_http::cors::{AllowOrigin, CorsLayer};
+use tower_http::limit::RequestBodyLimitLayer;
 use tower_http::trace::TraceLayer;
 use tracing_subscriber::EnvFilter;
 
@@ -42,6 +46,33 @@ async fn main() -> anyhow::Result<()> {
         schemas_dir,
     });
 
+    // -- Rate limiting (per-IP) --
+    let burst_size = env_parse("ARES_RATE_LIMIT_BURST", 30);
+    let per_second = env_parse("ARES_RATE_LIMIT_RPS", 1);
+    let body_limit = env_parse("ARES_BODY_SIZE_LIMIT", 2 * 1024 * 1024); // 2 MB
+
+    let governor_conf = GovernorConfigBuilder::default()
+        .per_second(per_second)
+        .burst_size(burst_size)
+        .finish()
+        .expect("Invalid rate limit configuration");
+
+    tracing::info!(burst_size, per_second, body_limit, "Rate limiting: enabled");
+
+    // Background task to clean up stale rate-limit entries
+    let governor_limiter = governor_conf.limiter().clone();
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(Duration::from_secs(60)).await;
+            tracing::debug!(
+                "Rate limiter storage size: {} (cleaning up)",
+                governor_limiter.len()
+            );
+            governor_limiter.retain_recent();
+        }
+    });
+
+    // -- CORS --
     let cors = match std::env::var("ARES_CORS_ORIGIN") {
         Ok(origin) if origin == "*" => CorsLayer::permissive(),
         Ok(origin) => {
@@ -55,16 +86,29 @@ async fn main() -> anyhow::Result<()> {
     };
 
     let app = routes::router(state)
+        .layer(GovernorLayer::new(governor_conf))
+        .layer(RequestBodyLimitLayer::new(body_limit))
         .layer(TraceLayer::new_for_http())
         .layer(cors);
 
     tracing::info!("Starting server on {addr}");
     let listener = TcpListener::bind(&addr).await?;
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
-        .await?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal())
+    .await?;
 
     Ok(())
+}
+
+/// Parse an env var as a numeric type, falling back to a default.
+fn env_parse<T: std::str::FromStr>(var: &str, default: T) -> T {
+    std::env::var(var)
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(default)
 }
 
 async fn shutdown_signal() {

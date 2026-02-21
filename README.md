@@ -179,6 +179,9 @@ Reference by path (`schemas/blog/1.0.0.json`) or by name (`blog@1.0.0`, `blog@la
 | `ARES_SERVER_PORT` | No | `3000` | HTTP server listen port |
 | `ARES_SCHEMAS_DIR` | No | `schemas` | Path to schemas directory |
 | `ARES_CORS_ORIGIN` | No | | Allowed CORS origins (comma-separated, or `*`) |
+| `ARES_RATE_LIMIT_BURST` | No | `30` | Max burst requests per IP |
+| `ARES_RATE_LIMIT_RPS` | No | `1` | Request replenish rate (per second) |
+| `ARES_BODY_SIZE_LIMIT` | No | `2097152` | Max request body size in bytes (2 MB) |
 | `CHROME_BIN` | No | Auto-detected | Override path to Chrome/Chromium binary |
 
 **Gemini** works via the OpenAI-compatible endpoint:
