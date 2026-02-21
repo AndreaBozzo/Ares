@@ -137,6 +137,74 @@ pub struct HealthResponse {
 }
 
 // ---------------------------------------------------------------------------
+// Scrape
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct ScrapeRequest {
+    /// Target URL to scrape
+    pub url: String,
+    /// JSON Schema definition for extraction
+    pub schema: serde_json::Value,
+    /// Schema name for storage
+    pub schema_name: String,
+    /// LLM model override (falls back to ARES_MODEL env)
+    pub model: Option<String>,
+    /// API base URL override (falls back to ARES_BASE_URL env)
+    pub base_url: Option<String>,
+    /// Persist result to database (default: true)
+    pub save: Option<bool>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct ScrapeResponse {
+    pub extracted_data: serde_json::Value,
+    pub content_hash: String,
+    pub data_hash: String,
+    pub changed: bool,
+    pub extraction_id: Option<Uuid>,
+}
+
+// ---------------------------------------------------------------------------
+// Schemas
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct SchemaListResponse {
+    pub schemas: Vec<SchemaEntryResponse>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct SchemaEntryResponse {
+    pub name: String,
+    pub latest_version: String,
+    pub versions: Vec<String>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct SchemaDetailResponse {
+    pub name: String,
+    pub version: String,
+    pub schema: serde_json::Value,
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct CreateSchemaRequest {
+    /// Schema name (e.g., "blog")
+    pub name: String,
+    /// Version string (e.g., "1.0.0")
+    pub version: String,
+    /// JSON Schema definition
+    pub schema: serde_json::Value,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct CreateSchemaResponse {
+    pub name: String,
+    pub version: String,
+}
+
+// ---------------------------------------------------------------------------
 // Errors
 // ---------------------------------------------------------------------------
 

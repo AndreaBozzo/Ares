@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::http::HeaderValue;
@@ -22,6 +23,8 @@ async fn main() -> anyhow::Result<()> {
     let admin_token = std::env::var("ARES_ADMIN_TOKEN").ok();
     let port = std::env::var("ARES_SERVER_PORT").unwrap_or_else(|_| "3000".to_string());
     let addr = format!("0.0.0.0:{port}");
+    let schemas_dir =
+        PathBuf::from(std::env::var("ARES_SCHEMAS_DIR").unwrap_or_else(|_| "schemas".to_string()));
 
     let db = Database::connect(&DatabaseConfig::from_env()?).await?;
     db.migrate().await?;
@@ -31,8 +34,13 @@ async fn main() -> anyhow::Result<()> {
     } else {
         tracing::info!("Admin authentication: disabled (set ARES_ADMIN_TOKEN to enable)");
     }
+    tracing::info!("Schemas directory: {}", schemas_dir.display());
 
-    let state = Arc::new(AppState { db, admin_token });
+    let state = Arc::new(AppState {
+        db,
+        admin_token,
+        schemas_dir,
+    });
 
     let cors = match std::env::var("ARES_CORS_ORIGIN") {
         Ok(origin) if origin == "*" => CorsLayer::permissive(),

@@ -14,6 +14,6 @@ pub mod testutil;
 
 pub use error::AppError;
 pub use models::{Extraction, ExtractionSchema, NewExtraction, ScrapeResult, compute_hash};
-pub use schema::{ResolvedSchema, SchemaResolver, derive_schema_name};
+pub use schema::{ResolvedSchema, SchemaEntry, SchemaResolver, derive_schema_name};
 pub use scrape::ScrapeService;
 pub use traits::{Cleaner, ExtractionStore, Extractor, ExtractorFactory, Fetcher, NullStore};

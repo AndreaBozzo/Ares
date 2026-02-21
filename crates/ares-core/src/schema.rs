@@ -11,6 +11,14 @@ pub struct ResolvedSchema {
     pub schema: serde_json::Value,
 }
 
+/// A schema entry returned when listing schemas.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SchemaEntry {
+    pub name: String,
+    pub latest_version: String,
+    pub versions: Vec<String>,
+}
+
 /// Resolves schema references (file paths or `name@version` strings) to
 /// loaded JSON schemas.
 pub struct SchemaResolver {
@@ -117,8 +125,11 @@ impl SchemaResolver {
     }
 
     /// Load and parse the schema registry (`registry.json`).
-    fn load_registry(&self) -> Result<HashMap<String, String>, AppError> {
+    pub fn load_registry(&self) -> Result<HashMap<String, String>, AppError> {
         let registry_path = self.schemas_dir.join("registry.json");
+        if !registry_path.exists() {
+            return Ok(HashMap::new());
+        }
         let registry_str = std::fs::read_to_string(&registry_path).map_err(|e| {
             AppError::SchemaError(format!(
                 "Failed to read schema registry {}: {e}",
@@ -128,6 +139,105 @@ impl SchemaResolver {
         let registry: HashMap<String, String> = serde_json::from_str(&registry_str)
             .map_err(|e| AppError::SchemaError(format!("Invalid JSON in schema registry: {e}")))?;
         Ok(registry)
+    }
+
+    /// List all schemas with their versions.
+    pub fn list_schemas(&self) -> Result<Vec<SchemaEntry>, AppError> {
+        let registry = self.load_registry()?;
+        let mut entries = Vec::new();
+
+        for (name, latest_version) in &registry {
+            let versions = self.list_versions(name)?;
+            entries.push(SchemaEntry {
+                name: name.clone(),
+                latest_version: latest_version.clone(),
+                versions,
+            });
+        }
+
+        entries.sort_by(|a, b| a.name.cmp(&b.name));
+        Ok(entries)
+    }
+
+    /// List all version files for a given schema name.
+    fn list_versions(&self, name: &str) -> Result<Vec<String>, AppError> {
+        let schema_dir = self.schemas_dir.join(name);
+        if !schema_dir.is_dir() {
+            return Ok(vec![]);
+        }
+
+        let mut versions = Vec::new();
+        let entries = std::fs::read_dir(&schema_dir).map_err(|e| {
+            AppError::SchemaError(format!(
+                "Failed to read schema directory {}: {e}",
+                schema_dir.display()
+            ))
+        })?;
+
+        for entry in entries {
+            let entry = entry.map_err(|e| {
+                AppError::SchemaError(format!("Failed to read directory entry: {e}"))
+            })?;
+            let path = entry.path();
+            if path.extension().is_some_and(|ext| ext == "json") {
+                if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                    versions.push(stem.to_string());
+                }
+            }
+        }
+
+        versions.sort();
+        Ok(versions)
+    }
+
+    /// Create a new schema version, writing the file and updating the registry.
+    pub fn create_schema(
+        &self,
+        name: &str,
+        version: &str,
+        schema: &serde_json::Value,
+    ) -> Result<(), AppError> {
+        // Validate inputs
+        if name.is_empty() || version.is_empty() {
+            return Err(AppError::SchemaError(
+                "Schema name and version must not be empty".to_string(),
+            ));
+        }
+
+        // Create directory if needed
+        let schema_dir = self.schemas_dir.join(name);
+        std::fs::create_dir_all(&schema_dir).map_err(|e| {
+            AppError::SchemaError(format!(
+                "Failed to create schema directory {}: {e}",
+                schema_dir.display()
+            ))
+        })?;
+
+        // Write schema file
+        let schema_path = schema_dir.join(format!("{version}.json"));
+        let pretty = serde_json::to_string_pretty(schema)
+            .map_err(|e| AppError::SchemaError(e.to_string()))?;
+        std::fs::write(&schema_path, pretty).map_err(|e| {
+            AppError::SchemaError(format!(
+                "Failed to write schema file {}: {e}",
+                schema_path.display()
+            ))
+        })?;
+
+        // Update registry — set this version as latest
+        let mut registry = self.load_registry()?;
+        registry.insert(name.to_string(), version.to_string());
+        let registry_path = self.schemas_dir.join("registry.json");
+        let registry_json = serde_json::to_string_pretty(&registry)
+            .map_err(|e| AppError::SchemaError(e.to_string()))?;
+        std::fs::write(&registry_path, format!("{registry_json}\n")).map_err(|e| {
+            AppError::SchemaError(format!(
+                "Failed to write schema registry {}: {e}",
+                registry_path.display()
+            ))
+        })?;
+
+        Ok(())
     }
 }
 

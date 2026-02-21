@@ -10,13 +10,17 @@ use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 use uuid::Uuid;
 
+use ares_client::{HtmdCleaner, OpenAiExtractor, ReqwestFetcher};
 use ares_core::job::CreateScrapeJobRequest;
 use ares_core::job_queue::JobQueue;
+use ares_core::{NullStore, SchemaResolver, ScrapeService};
 
 use crate::auth::require_api_key;
 use crate::dto::{
-    CreateJobRequest, CreateJobResponse, ExtractionHistoryQuery, ExtractionHistoryResponse,
-    ExtractionResponse, HealthResponse, JobListResponse, JobResponse, ListJobsQuery,
+    CreateJobRequest, CreateJobResponse, CreateSchemaRequest, CreateSchemaResponse,
+    ExtractionHistoryQuery, ExtractionHistoryResponse, ExtractionResponse, HealthResponse,
+    JobListResponse, JobResponse, ListJobsQuery, SchemaDetailResponse, SchemaEntryResponse,
+    SchemaListResponse, ScrapeRequest, ScrapeResponse,
 };
 use crate::error::ApiError;
 use crate::openapi::ApiDoc;
@@ -25,11 +29,15 @@ use crate::state::AppState;
 /// Build the full router with all routes and middleware.
 pub fn router(state: Arc<AppState>) -> Router {
     let api = Router::new()
+        .route("/v1/scrape", post(scrape))
         .route("/v1/jobs", post(create_job))
         .route("/v1/jobs", get(list_jobs))
         .route("/v1/jobs/{id}", get(get_job))
         .route("/v1/jobs/{id}", delete(cancel_job))
         .route("/v1/extractions", get(get_extractions))
+        .route("/v1/schemas", get(list_schemas))
+        .route("/v1/schemas", post(create_schema))
+        .route("/v1/schemas/{name}/{version}", get(get_schema))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             require_api_key,
@@ -43,7 +51,74 @@ pub fn router(state: Arc<AppState>) -> Router {
 }
 
 // ---------------------------------------------------------------------------
-// Handlers
+// Scrape
+// ---------------------------------------------------------------------------
+
+#[utoipa::path(
+    post,
+    path = "/v1/scrape",
+    request_body = ScrapeRequest,
+    responses(
+        (status = 200, description = "Extraction result", body = ScrapeResponse),
+        (status = 400, description = "Bad request", body = crate::dto::ErrorResponse),
+        (status = 401, description = "Unauthorized"),
+    ),
+    security(("bearer" = [])),
+    tag = "scrape"
+)]
+pub async fn scrape(
+    State(state): State<Arc<AppState>>,
+    axum::Json(body): axum::Json<ScrapeRequest>,
+) -> Result<impl IntoResponse, ApiError> {
+    // Resolve LLM config from request body or environment
+    let api_key = std::env::var("ARES_API_KEY").map_err(|_| {
+        ares_core::AppError::ConfigError(
+            "ARES_API_KEY must be set for scrape endpoints".to_string(),
+        )
+    })?;
+
+    let model = body.model.unwrap_or_else(|| {
+        std::env::var("ARES_MODEL").unwrap_or_else(|_| "gpt-4o-mini".to_string())
+    });
+
+    let base_url = body.base_url.unwrap_or_else(|| {
+        std::env::var("ARES_BASE_URL").unwrap_or_else(|_| "https://api.openai.com/v1".to_string())
+    });
+
+    let save = body.save.unwrap_or(true);
+
+    // Build pipeline components
+    let fetcher = ReqwestFetcher::new()?;
+    let cleaner = HtmdCleaner::new();
+    let extractor = OpenAiExtractor::with_base_url(&api_key, &model, &base_url)?;
+
+    // Run the scrape pipeline
+    let result = if save {
+        let repo = state.db.extraction_repo();
+        let service = ScrapeService::with_store(fetcher, cleaner, extractor, repo, model);
+        service
+            .scrape(&body.url, &body.schema, &body.schema_name)
+            .await?
+    } else {
+        let service = ScrapeService::with_store(fetcher, cleaner, extractor, NullStore, model);
+        service
+            .scrape(&body.url, &body.schema, &body.schema_name)
+            .await?
+    };
+
+    let response = ScrapeResponse {
+        extracted_data: result.extracted_data,
+        content_hash: result.content_hash,
+        data_hash: result.data_hash,
+        changed: result.changed,
+        extraction_id: result.extraction_id,
+    };
+
+    Ok(axum::Json(response))
+}
+
+// ---------------------------------------------------------------------------
+// Jobs
 // ---------------------------------------------------------------------------
 
 #[utoipa::path(
@@ -226,6 +301,112 @@ pub async fn get_extractions(
 
     Ok(axum::Json(response))
 }
+
+// ---------------------------------------------------------------------------
+// Schemas
+// ---------------------------------------------------------------------------
+
+#[utoipa::path(
+    get,
+    path = "/v1/schemas",
+    responses(
+        (status = 200, description = "List of schemas", body = SchemaListResponse),
+        (status = 401, description = "Unauthorized"),
+    ),
+    security(("bearer" = [])),
+    tag = "schemas"
+)]
+pub async fn list_schemas(
+    State(state): State<Arc<AppState>>,
+) -> Result<impl IntoResponse, ApiError> {
+    let resolver = SchemaResolver::new(&state.schemas_dir);
+    let entries = resolver.list_schemas()?;
+
+    let response = SchemaListResponse {
+        schemas: entries
+            .into_iter()
+            .map(|e| SchemaEntryResponse {
+                name: e.name,
+                latest_version: e.latest_version,
+                versions: e.versions,
+            })
+            .collect(),
+    };
+
+    Ok(axum::Json(response))
+}
+
+#[utoipa::path(
+    get,
+    path = "/v1/schemas/{name}/{version}",
+    params(
+        ("name" = String, Path, description = "Schema name"),
+        ("version" = String, Path, description = "Schema version"),
+    ),
+    responses(
+        (status = 200, description = "Schema details", body = SchemaDetailResponse),
+        (status = 404, description = "Not found", body = crate::dto::ErrorResponse),
+        (status = 401, description = "Unauthorized"),
+    ),
+    security(("bearer" = [])),
+    tag = "schemas"
+)]
+pub async fn get_schema(
+    State(state): State<Arc<AppState>>,
+    Path((name, version)): Path<(String, String)>,
+) -> Result<impl IntoResponse, ApiError> {
+    let resolver = SchemaResolver::new(&state.schemas_dir);
+    let schema_ref = format!("{name}@{version}");
+
+    match resolver.resolve(&schema_ref) {
+        Ok(resolved) => {
+            let response = SchemaDetailResponse {
+                name,
+                version,
+                schema: resolved.schema,
+            };
+            Ok(axum::Json(response).into_response())
+        }
+        Err(_) => {
+            let body = crate::dto::ErrorResponse {
+                error: "not_found".to_string(),
+                message: format!("Schema not found: {schema_ref}"),
+            };
+            Ok((StatusCode::NOT_FOUND, axum::Json(body)).into_response())
+        }
+    }
+}
+
+#[utoipa::path(
+    post,
+    path = "/v1/schemas",
+    request_body = CreateSchemaRequest,
+    responses(
+        (status = 201, description = "Schema created", body = CreateSchemaResponse),
+        (status = 400, description = "Bad request", body = crate::dto::ErrorResponse),
+        (status = 401, description = "Unauthorized"),
+    ),
+    security(("bearer" = [])),
+    tag = "schemas"
+)]
+pub async fn create_schema(
+    State(state): State<Arc<AppState>>,
+    axum::Json(body): axum::Json<CreateSchemaRequest>,
+) -> Result<impl IntoResponse, ApiError> {
+    let resolver = SchemaResolver::new(&state.schemas_dir);
+    resolver.create_schema(&body.name, &body.version, &body.schema)?;
+
+    let response = CreateSchemaResponse {
+        name: body.name,
+        version: body.version,
+    };
+
+    Ok((StatusCode::CREATED, axum::Json(response)))
+}
+
+// ---------------------------------------------------------------------------
+// Health
+// ---------------------------------------------------------------------------
 
 #[utoipa::path(
     get,

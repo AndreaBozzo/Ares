@@ -169,6 +169,7 @@ name = "ares-server"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "ares-client",
  "ares-core",
  "ares-db",
  "axum",
@@ -179,6 +180,7 @@ dependencies = [
  "serde_json",
  "sqlx",
  "subtle",
+ "tempfile",
  "testcontainers",
  "thiserror 2.0.18",
  "tokio",

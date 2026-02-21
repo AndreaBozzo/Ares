@@ -1,8 +1,10 @@
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::Router;
 use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
+use tempfile::TempDir;
 use testcontainers::core::{ContainerPort, WaitFor};
 use testcontainers::runners::AsyncRunner;
 use testcontainers::{ContainerAsync, GenericImage, ImageExt};
@@ -13,42 +15,66 @@ use ares_server::state::AppState;
 
 pub const TEST_API_KEY: &str = "test-secret-key";
 
-/// Spin up a PostgreSQL container and return the test app router + container handle.
-pub async fn setup_test_app() -> (Router, ContainerAsync<GenericImage>) {
-    let container = GenericImage::new("postgres", "16")
-        .with_exposed_port(ContainerPort::Tcp(5432))
-        .with_wait_for(WaitFor::message_on_stderr(
-            "database system is ready to accept connections",
-        ))
-        .with_env_var("POSTGRES_PASSWORD", "postgres")
-        .with_env_var("POSTGRES_DB", "ares_test")
-        .start()
-        .await
-        .expect("Failed to start PostgreSQL container");
+/// Test app handle that keeps the temporary schemas directory alive.
+pub struct TestApp {
+    pub router: Router,
+    pub schemas_dir: PathBuf,
+    _container: ContainerAsync<GenericImage>,
+    _tmp_dir: TempDir,
+}
 
-    let host = container.get_host().await.expect("Failed to get host");
-    let port = container
-        .get_host_port_ipv4(5432)
-        .await
-        .expect("Failed to get port");
+/// Spin up a PostgreSQL container and return the test app.
+pub async fn setup_test_app() -> TestApp {
+    let tmp_dir = TempDir::new().expect("Failed to create temp dir");
+    let schemas_dir = tmp_dir.path().join("schemas");
+    std::fs::create_dir_all(&schemas_dir).expect("Failed to create schemas dir");
 
-    let url = format!("postgresql://postgres:postgres@{host}:{port}/ares_test");
-
-    let pool = retry_connect(&url).await;
+    let container = start_postgres().await;
+    let pool = connect_to_container(&container).await;
     let db = Database::from_pool(pool);
     db.migrate().await.expect("Failed to run migrations");
 
     let state = Arc::new(AppState {
         db,
         admin_token: Some(TEST_API_KEY.to_string()),
+        schemas_dir: schemas_dir.clone(),
     });
 
-    (routes::router(state), container)
+    TestApp {
+        router: routes::router(state),
+        schemas_dir,
+        _container: container,
+        _tmp_dir: tmp_dir,
+    }
 }
 
 /// Spin up a PostgreSQL container with no admin token configured (admin endpoints return 403).
-pub async fn setup_test_app_no_auth() -> (Router, ContainerAsync<GenericImage>) {
-    let container = GenericImage::new("postgres", "16")
+pub async fn setup_test_app_no_auth() -> TestApp {
+    let tmp_dir = TempDir::new().expect("Failed to create temp dir");
+    let schemas_dir = tmp_dir.path().join("schemas");
+    std::fs::create_dir_all(&schemas_dir).expect("Failed to create schemas dir");
+
+    let container = start_postgres().await;
+    let pool = connect_to_container(&container).await;
+    let db = Database::from_pool(pool);
+    db.migrate().await.expect("Failed to run migrations");
+
+    let state = Arc::new(AppState {
+        db,
+        admin_token: None,
+        schemas_dir,
+    });
+
+    TestApp {
+        router: routes::router(state),
+        schemas_dir: tmp_dir.path().join("schemas"),
+        _container: container,
+        _tmp_dir: tmp_dir,
+    }
+}
+
+async fn start_postgres() -> ContainerAsync<GenericImage> {
+    GenericImage::new("postgres", "16")
         .with_exposed_port(ContainerPort::Tcp(5432))
         .with_wait_for(WaitFor::message_on_stderr(
             "database system is ready to accept connections",
@@ -57,8 +83,10 @@ pub async fn setup_test_app_no_auth() -> (Router, ContainerAsync<GenericImage>) 
         .with_env_var("POSTGRES_DB", "ares_test")
         .start()
         .await
-        .expect("Failed to start PostgreSQL container");
+        .expect("Failed to start PostgreSQL container")
+}
 
+async fn connect_to_container(container: &ContainerAsync<GenericImage>) -> PgPool {
     let host = container.get_host().await.expect("Failed to get host");
     let port = container
         .get_host_port_ipv4(5432)
@@ -66,17 +94,7 @@ pub async fn setup_test_app_no_auth() -> (Router, ContainerAsync<GenericImage>) 
         .expect("Failed to get port");
 
     let url = format!("postgresql://postgres:postgres@{host}:{port}/ares_test");
-
-    let pool = retry_connect(&url).await;
-    let db = Database::from_pool(pool);
-    db.migrate().await.expect("Failed to run migrations");
-
-    let state = Arc::new(AppState {
-        db,
-        admin_token: None,
-    });
-
-    (routes::router(state), container)
+    retry_connect(&url).await
 }
 
 async fn retry_connect(url: &str) -> PgPool {

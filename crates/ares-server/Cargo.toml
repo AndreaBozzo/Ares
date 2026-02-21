@@ -17,6 +17,7 @@ utoipa-swagger-ui.workspace = true
 
 # Internal crates
 ares-core.workspace = true
+ares-client.workspace = true
 ares-db.workspace = true
 
 # Async
@@ -46,6 +47,7 @@ dotenvy.workspace = true
 
 [dev-dependencies]
 testcontainers = "0.26"
+tempfile = "3"
 tower = { workspace = true, features = ["util"] }
 axum = { workspace = true, features = ["macros"] }
 http-body-util = "0.1"

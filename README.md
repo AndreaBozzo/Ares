@@ -132,11 +132,15 @@ Once running, interactive API docs are available at **`/swagger-ui`**.
 
 | Method | Path | Auth | Description |
 |---|---|---|---|
+| `POST` | `/v1/scrape` | Bearer | One-shot scrape and extract |
 | `POST` | `/v1/jobs` | Bearer | Create a scrape job |
 | `GET` | `/v1/jobs` | Bearer | List jobs (filter by status, limit) |
 | `GET` | `/v1/jobs/{id}` | Bearer | Get job details |
 | `DELETE` | `/v1/jobs/{id}` | Bearer | Cancel a pending job |
 | `GET` | `/v1/extractions` | Bearer | Query extraction history |
+| `GET` | `/v1/schemas` | Bearer | List all schemas |
+| `GET` | `/v1/schemas/{name}/{version}` | Bearer | Get schema definition |
+| `POST` | `/v1/schemas` | Bearer | Create/upload a schema version |
 | `GET` | `/health` | — | Health check (database connectivity) |
 
 ### Authentication
@@ -173,6 +177,7 @@ Reference by path (`schemas/blog/1.0.0.json`) or by name (`blog@1.0.0`, `blog@la
 | `DATABASE_MAX_CONNECTIONS` | No | `5` | PostgreSQL connection pool size |
 | `ARES_ADMIN_TOKEN` | No | | Bearer token for REST API auth |
 | `ARES_SERVER_PORT` | No | `3000` | HTTP server listen port |
+| `ARES_SCHEMAS_DIR` | No | `schemas` | Path to schemas directory |
 | `ARES_CORS_ORIGIN` | No | | Allowed CORS origins (comma-separated, or `*`) |
 | `CHROME_BIN` | No | Auto-detected | Override path to Chrome/Chromium binary |
 
