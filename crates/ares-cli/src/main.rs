@@ -247,7 +247,8 @@ async fn main() -> Result<()> {
                     Some(t) => ReqwestFetcher::with_timeout(t),
                     None => ReqwestFetcher::new(),
                 }
-                .context("Failed to create HTTP client")?;
+                .context("Failed to create HTTP client")?
+                .allow_private_urls();
                 cmd_scrape(fetcher, opts).await?;
             }
         }
@@ -401,7 +402,8 @@ async fn main() -> Result<()> {
                     Some(t) => ReqwestFetcher::with_timeout(t),
                     None => ReqwestFetcher::new(),
                 }
-                .context("Failed to create HTTP client")?;
+                .context("Failed to create HTTP client")?
+                .allow_private_urls();
                 cmd_worker(fetcher, worker_opts).await?;
             }
         }
