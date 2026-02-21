@@ -37,7 +37,7 @@ All external dependencies are behind traits (`Fetcher`, `Cleaner`, `Extractor`, 
 
 ## Prerequisites
 
-- **Rust** 1.87+ (edition 2024)
+- **Rust** 1.88+ (edition 2024)
 - **Docker** (for PostgreSQL and integration tests)
 - An **OpenAI-compatible API key** (OpenAI, Gemini, or any compatible endpoint)
 - **Chromium / Chrome** (only when using `--browser` for JS-rendered pages)
