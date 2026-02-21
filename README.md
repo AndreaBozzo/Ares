@@ -15,7 +15,7 @@
 
 ---
 
-Ares fetches web pages, converts HTML to Markdown, and uses LLM APIs to extract structured data defined by JSON Schemas. It supports persistent job queues with retries, circuit breaking, change detection, and graceful worker shutdown.
+Ares fetches web pages, converts HTML to Markdown, and uses LLM APIs to extract structured data defined by JSON Schemas. It exposes both a CLI and a REST API, supports persistent job queues with retries, circuit breaking, rate-limiting, change detection, and graceful shutdown.
 
 > *Named after the Greek god of war and courage.*
 
@@ -27,9 +27,10 @@ Conceptual sibling of [Ceres](https://github.com/AndreaBozzo/Ceres) — same phi
 
 ```
 ares-cli          CLI interface — arg parsing, wiring, delegation
-ares-core         Business logic — ScrapeService, WorkerService, CircuitBreaker, traits
+ares-server       REST API — Axum HTTP server, OpenAPI/Swagger UI, Bearer auth
+ares-core         Business logic — ScrapeService, WorkerService, CircuitBreaker, Throttle, traits
 ares-client       External adapters — HTTP fetcher, headless browser fetcher, HTML cleaner, LLM client
-ares-db           PostgreSQL persistence — ExtractionRepository, ScrapeJobRepository
+ares-db           PostgreSQL persistence — ExtractionRepository, ScrapeJobRepository, migrations
 ```
 
 All external dependencies are behind traits (`Fetcher`, `Cleaner`, `Extractor`, `ExtractionStore`, `ExtractorFactory`, `JobQueue`), enabling full mock-based testing. The `Fetcher` trait has two implementations: `ReqwestFetcher` for static pages and `BrowserFetcher` (feature-gated behind `browser`) for JS-rendered SPAs.
@@ -110,6 +111,44 @@ Start a background worker that polls the job queue, processes scrape jobs throug
 | `-a, --api-key` | `ARES_API_KEY` | API key |
 | `--browser` | | Use headless browser for JS-rendered pages (requires `browser` feature) |
 
+## REST API
+
+Ares ships a standalone HTTP server (`ares-server`) built on [Axum](https://github.com/tokio-rs/axum) with auto-generated [OpenAPI](https://swagger.io/specification/) documentation.
+
+### Running the server
+
+```bash
+# Run locally
+cargo run --bin ares-server
+
+# Or with Docker
+docker build -t ares-server:latest .
+docker run -p 3000:3000 --env-file .env ares-server:latest
+```
+
+Once running, interactive API docs are available at **`/swagger-ui`**.
+
+### Endpoints
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| `POST` | `/v1/jobs` | Bearer | Create a scrape job |
+| `GET` | `/v1/jobs` | Bearer | List jobs (filter by status, limit) |
+| `GET` | `/v1/jobs/{id}` | Bearer | Get job details |
+| `DELETE` | `/v1/jobs/{id}` | Bearer | Cancel a pending job |
+| `GET` | `/v1/extractions` | Bearer | Query extraction history |
+| `GET` | `/health` | — | Health check (database connectivity) |
+
+### Authentication
+
+Protected endpoints require a `Bearer` token set via `ARES_ADMIN_TOKEN`. Token comparison uses constant-time equality (`subtle` crate) to prevent timing attacks.
+
+```bash
+curl -H "Authorization: Bearer $ARES_ADMIN_TOKEN" http://localhost:3000/v1/jobs
+```
+
+If `ARES_ADMIN_TOKEN` is not set, all protected endpoints return `403 Forbidden`.
+
 ## Schemas
 
 Schemas are versioned JSON Schema files stored in `schemas/`:
@@ -132,6 +171,9 @@ Reference by path (`schemas/blog/1.0.0.json`) or by name (`blog@1.0.0`, `blog@la
 | `ARES_BASE_URL` | No | `https://api.openai.com/v1` | OpenAI-compatible endpoint |
 | `DATABASE_URL` | For persistence | | PostgreSQL connection string |
 | `DATABASE_MAX_CONNECTIONS` | No | `5` | PostgreSQL connection pool size |
+| `ARES_ADMIN_TOKEN` | No | | Bearer token for REST API auth |
+| `ARES_SERVER_PORT` | No | `3000` | HTTP server listen port |
+| `ARES_CORS_ORIGIN` | No | | Allowed CORS origins (comma-separated, or `*`) |
 | `CHROME_BIN` | No | Auto-detected | Override path to Chrome/Chromium binary |
 
 **Gemini** works via the OpenAI-compatible endpoint:
@@ -140,6 +182,18 @@ Reference by path (`schemas/blog/1.0.0.json`) or by name (`blog@1.0.0`, `blog@la
 export ARES_BASE_URL="https://generativelanguage.googleapis.com/v1beta/openai"
 export ARES_MODEL="gemini-2.5-flash"
 ```
+
+## Docker
+
+```bash
+# Build the image
+docker build -t ares-server:latest .
+
+# Run with docker compose (PostgreSQL + pgAdmin + server)
+docker compose up -d
+```
+
+The Dockerfile uses a multi-stage build (Rust builder → Debian slim runtime) with Chromium pre-installed for browser-based scraping. The release binary is compiled with LTO and symbol stripping for minimal image size.
 
 ## Development
 
@@ -153,10 +207,15 @@ make test-unit
 # Run integration tests (requires Docker)
 make test-integration
 
+# Run database migrations
+make migrate
+
 # Start/stop PostgreSQL
 make docker-up
 make docker-down
 ```
+
+CI runs on every push and PR via GitHub Actions: formatting, Clippy, unit tests, integration tests (with a Postgres service container), and a `cargo-deny` security audit.
 
 ## License
 
