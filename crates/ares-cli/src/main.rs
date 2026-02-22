@@ -560,15 +560,11 @@ async fn cmd_history(
     let history = repo.get_history(url, schema_name, limit).await?;
 
     if history.is_empty() {
-        println!(
-            "No extractions found for url={url} schema={schema_name}"
-        );
+        println!("No extractions found for url={url} schema={schema_name}");
         return Ok(());
     }
 
-    println!(
-        "Extraction history for {url} (schema: {schema_name}):\n"
-    );
+    println!("Extraction history for {url} (schema: {schema_name}):\n");
 
     for (i, extraction) in history.iter().enumerate() {
         let changed = if i + 1 < history.len() {

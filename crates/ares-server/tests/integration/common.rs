@@ -112,7 +112,5 @@ async fn retry_connect(url: &str) -> PgPool {
             }
         }
     }
-    panic!(
-        "Failed to connect to test database at {url}: {last_err:?}"
-    );
+    panic!("Failed to connect to test database at {url}: {last_err:?}");
 }
