@@ -41,24 +41,24 @@ CREATE TABLE IF NOT EXISTS scrape_jobs (
 );
 
 -- Efficient job claiming (pending jobs sorted by creation)
-CREATE INDEX idx_scrape_jobs_pending
+CREATE INDEX IF NOT EXISTS idx_scrape_jobs_pending
 ON scrape_jobs(created_at)
 WHERE status = 'pending';
 
 -- Retry scheduling
-CREATE INDEX idx_scrape_jobs_retry
+CREATE INDEX IF NOT EXISTS idx_scrape_jobs_retry
 ON scrape_jobs(next_retry_at)
 WHERE status = 'pending' AND next_retry_at IS NOT NULL;
 
 -- Worker's running jobs (graceful shutdown)
-CREATE INDEX idx_scrape_jobs_worker
+CREATE INDEX IF NOT EXISTS idx_scrape_jobs_worker
 ON scrape_jobs(worker_id)
 WHERE status = 'running';
 
 -- List jobs by status
-CREATE INDEX idx_scrape_jobs_status
+CREATE INDEX IF NOT EXISTS idx_scrape_jobs_status
 ON scrape_jobs(status, created_at DESC);
 
 -- URL-specific job lookup
-CREATE INDEX idx_scrape_jobs_url
+CREATE INDEX IF NOT EXISTS idx_scrape_jobs_url
 ON scrape_jobs(url, created_at DESC);

@@ -15,6 +15,6 @@ uuid.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
-testcontainers = "0.26"
+testcontainers.workspace = true
 tokio.workspace = true
 sqlx.workspace = true

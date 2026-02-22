@@ -139,7 +139,7 @@ impl Extractor for OpenAiExtractor {
                     role: "user".to_string(),
                     content: format!(
                         "Extract data according to this JSON schema:\n```json\n{}\n```\n\nFrom the following web content:\n\n{}",
-                        serde_json::to_string_pretty(schema).unwrap_or_default(),
+                        serde_json::to_string_pretty(schema)?,
                         content
                     ),
                 },

@@ -91,6 +91,10 @@ One-shot extraction. Fetches the URL, cleans HTML to Markdown, sends it to the L
 | `--save` | | Persist result to database |
 | `--schema-name` | | Override schema name for storage |
 | `--browser` | | Use headless browser for JS-rendered pages (requires `browser` feature) |
+| `--fetch-timeout` | | HTTP fetch timeout in seconds (default: 30) |
+| `--llm-timeout` | | LLM API timeout in seconds (default: 120) |
+| `--system-prompt` | | Custom system prompt for LLM extraction |
+| `--skip-unchanged` | | Skip saving when extracted data hasn't changed (requires `--save`) |
 
 ### `ares history`
 
@@ -110,6 +114,10 @@ Start a background worker that polls the job queue, processes scrape jobs throug
 | `--poll-interval` | | Seconds between job queue polls (default: 5) |
 | `-a, --api-key` | `ARES_API_KEY` | API key |
 | `--browser` | | Use headless browser for JS-rendered pages (requires `browser` feature) |
+| `--fetch-timeout` | | HTTP fetch timeout in seconds (default: 30) |
+| `--llm-timeout` | | LLM API timeout in seconds (default: 120) |
+| `--system-prompt` | | Custom system prompt for LLM extraction |
+| `--skip-unchanged` | | Skip saving when extracted data hasn't changed |
 
 ## REST API
 

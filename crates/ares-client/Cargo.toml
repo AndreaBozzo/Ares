@@ -11,7 +11,7 @@ browser = ["dep:chromiumoxide", "dep:futures"]
 [dependencies]
 ares-core.workspace = true
 reqwest.workspace = true
-url = "2"
+url.workspace = true
 htmd.workspace = true
 tokio.workspace = true
 serde.workspace = true

@@ -40,18 +40,18 @@ uuid.workspace = true
 chrono.workspace = true
 
 # Security
-subtle = "2"
+subtle.workspace = true
 
 # Env
 dotenvy.workspace = true
 
 # Rate limiting
-tower_governor = "0.8"
+tower_governor.workspace = true
 
 [dev-dependencies]
-testcontainers = "0.26"
-tempfile = "3"
+testcontainers.workspace = true
+tempfile.workspace = true
 tower = { workspace = true, features = ["util"] }
 axum = { workspace = true, features = ["macros"] }
-http-body-util = "0.1"
+http-body-util.workspace = true
 sqlx.workspace = true

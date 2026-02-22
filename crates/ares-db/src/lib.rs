@@ -1,3 +1,5 @@
+//! Database layer — connection pool, migrations, and repositories.
+
 pub mod config;
 pub mod database;
 pub mod job_repository;

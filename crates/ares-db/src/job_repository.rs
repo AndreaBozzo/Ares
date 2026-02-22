@@ -41,16 +41,21 @@ struct ScrapeJobRow {
     worker_id: Option<String>,
 }
 
-impl From<ScrapeJobRow> for ScrapeJob {
-    fn from(row: ScrapeJobRow) -> Self {
-        ScrapeJob {
+impl TryFrom<ScrapeJobRow> for ScrapeJob {
+    type Error = AppError;
+
+    fn try_from(row: ScrapeJobRow) -> Result<Self, AppError> {
+        let status = row.status.parse().map_err(|_| {
+            AppError::DatabaseError(format!("Invalid job status in database: '{}'", row.status))
+        })?;
+        Ok(ScrapeJob {
             id: row.id,
             url: row.url,
             schema_name: row.schema_name,
             schema: row.schema,
             model: row.model,
             base_url: row.base_url,
-            status: row.status.parse().unwrap_or(JobStatus::Pending),
+            status,
             created_at: row.created_at,
             updated_at: row.updated_at,
             started_at: row.started_at,
@@ -61,7 +66,7 @@ impl From<ScrapeJobRow> for ScrapeJob {
             error_message: row.error_message,
             extraction_id: row.extraction_id,
             worker_id: row.worker_id,
-        }
+        })
     }
 }
 
@@ -84,7 +89,7 @@ impl JobQueue for ScrapeJobRepository {
         .await
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
-        Ok(row.into())
+        row.try_into()
     }
 
     async fn claim_job(&self, worker_id: &str) -> Result<Option<ScrapeJob>, AppError> {
@@ -108,7 +113,7 @@ impl JobQueue for ScrapeJobRepository {
         .await
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
-        Ok(row.map(Into::into))
+        row.map(ScrapeJob::try_from).transpose()
     }
 
     async fn complete_job(
@@ -188,7 +193,7 @@ impl JobQueue for ScrapeJobRepository {
             .await
             .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
-        Ok(row.map(Into::into))
+        row.map(ScrapeJob::try_from).transpose()
     }
 
     async fn list_jobs(
@@ -223,7 +228,9 @@ impl JobQueue for ScrapeJobRepository {
         }
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
-        Ok(rows.into_iter().map(Into::into).collect())
+        rows.into_iter()
+            .map(ScrapeJob::try_from)
+            .collect::<Result<Vec<_>, _>>()
     }
 
     async fn release_job(&self, job_id: Uuid) -> Result<(), AppError> {

@@ -12,6 +12,12 @@ members = [
 version = "0.1.0"
 edition = "2024"
 license = "Apache-2.0"
+authors = ["Andrea Bozzo"]
+repository = "https://github.com/AndreaBozzo/Ares"
+readme = "README.md"
+rust-version = "1.88"
+keywords = ["scraping", "extraction", "llm", "web"]
+categories = ["command-line-utilities", "web-programming"]
 
 [workspace.dependencies]
 # Serialization
@@ -64,8 +70,22 @@ htmd = "0.5.0"
 chromiumoxide = { version = "0.8", features = ["tokio-runtime"], default-features = false }
 futures = "0.3.32"
 
+# URL
+url = "2"
+
+# Security
+subtle = "2"
+
+# Rate limiting
+tower_governor = "0.8"
+
 # Database
 sqlx = { version = "0.8", features = ["runtime-tokio", "tls-native-tls", "postgres", "uuid", "chrono", "json"] }
+
+# Test
+testcontainers = "0.26"
+tempfile = "3"
+http-body-util = "0.1"
 
 # Internal crates
 ares-core = { path = "crates/ares-core" }

@@ -48,12 +48,6 @@ impl ReqwestFetcher {
     }
 }
 
-impl Default for ReqwestFetcher {
-    fn default() -> Self {
-        Self::new().expect("Failed to create HTTP client")
-    }
-}
-
 impl Fetcher for ReqwestFetcher {
     async fn fetch(&self, url: &str) -> Result<String, AppError> {
         if self.ssrf_protection {

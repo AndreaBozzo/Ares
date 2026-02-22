@@ -177,7 +177,7 @@ pub async fn list_jobs(
         .status
         .map(|s| {
             s.parse()
-                .map_err(|e: String| ares_core::error::AppError::SchemaValidationError(e))
+                .map_err(|e: String| ares_core::error::AppError::Generic(e))
         })
         .transpose()?;
 

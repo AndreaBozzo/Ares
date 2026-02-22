@@ -1,3 +1,5 @@
+//! HTTP clients and adapters — fetchers, HTML cleaner, and LLM extractor.
+
 pub mod cleaner;
 pub mod fetcher;
 pub mod llm;

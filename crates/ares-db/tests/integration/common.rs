@@ -44,11 +44,11 @@ const MIGRATIONS: &[&str] = &[
             status IN ('pending', 'running', 'completed', 'failed', 'cancelled')
         )
     )"#,
-    r#"CREATE INDEX idx_scrape_jobs_pending ON scrape_jobs(created_at) WHERE status = 'pending'"#,
-    r#"CREATE INDEX idx_scrape_jobs_retry ON scrape_jobs(next_retry_at) WHERE status = 'pending' AND next_retry_at IS NOT NULL"#,
-    r#"CREATE INDEX idx_scrape_jobs_worker ON scrape_jobs(worker_id) WHERE status = 'running'"#,
-    r#"CREATE INDEX idx_scrape_jobs_status ON scrape_jobs(status, created_at DESC)"#,
-    r#"CREATE INDEX idx_scrape_jobs_url ON scrape_jobs(url, created_at DESC)"#,
+    r#"CREATE INDEX IF NOT EXISTS idx_scrape_jobs_pending ON scrape_jobs(created_at) WHERE status = 'pending'"#,
+    r#"CREATE INDEX IF NOT EXISTS idx_scrape_jobs_retry ON scrape_jobs(next_retry_at) WHERE status = 'pending' AND next_retry_at IS NOT NULL"#,
+    r#"CREATE INDEX IF NOT EXISTS idx_scrape_jobs_worker ON scrape_jobs(worker_id) WHERE status = 'running'"#,
+    r#"CREATE INDEX IF NOT EXISTS idx_scrape_jobs_status ON scrape_jobs(status, created_at DESC)"#,
+    r#"CREATE INDEX IF NOT EXISTS idx_scrape_jobs_url ON scrape_jobs(url, created_at DESC)"#,
 ];
 
 /// Spins up a PostgreSQL container and returns a connected pool.
