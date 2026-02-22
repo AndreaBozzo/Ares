@@ -165,7 +165,7 @@ impl Extractor for OpenAiExtractor {
                 if e.is_timeout() {
                     AppError::Timeout(self.timeout_secs)
                 } else if e.is_connect() {
-                    AppError::NetworkError(format!("Connection failed: {}", e))
+                    AppError::NetworkError(format!("Connection failed: {e}"))
                 } else {
                     AppError::HttpError(e.to_string())
                 }
@@ -178,7 +178,7 @@ impl Extractor for OpenAiExtractor {
 
             let message = serde_json::from_str::<ApiError>(&body)
                 .map(|e| e.error.message)
-                .unwrap_or_else(|_| format!("HTTP {}: {}", status_code, body));
+                .unwrap_or_else(|_| format!("HTTP {status_code}: {body}"));
 
             let retryable = status_code == 429 || status_code >= 500;
 
@@ -196,7 +196,7 @@ impl Extractor for OpenAiExtractor {
         let chat_response: ChatResponse = response
             .json()
             .await
-            .map_err(|e| AppError::HttpError(format!("Failed to parse LLM response: {}", e)))?;
+            .map_err(|e| AppError::HttpError(format!("Failed to parse LLM response: {e}")))?;
 
         let content_str = chat_response
             .choices
@@ -210,8 +210,7 @@ impl Extractor for OpenAiExtractor {
 
         serde_json::from_str(content_str).map_err(|e| {
             AppError::SchemaValidationError(format!(
-                "LLM returned invalid JSON: {}. Raw: {}",
-                e, content_str
+                "LLM returned invalid JSON: {e}. Raw: {content_str}"
             ))
         })
     }

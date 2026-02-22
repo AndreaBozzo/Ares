@@ -52,7 +52,7 @@ impl FromStr for JobStatus {
             "completed" => Ok(JobStatus::Completed),
             "failed" => Ok(JobStatus::Failed),
             "cancelled" => Ok(JobStatus::Cancelled),
-            _ => Err(format!("Unknown job status: {}", s)),
+            _ => Err(format!("Unknown job status: {s}")),
         }
     }
 }

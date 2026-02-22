@@ -58,7 +58,7 @@ impl Fetcher for ReqwestFetcher {
             if e.is_timeout() {
                 AppError::Timeout(self.timeout_secs)
             } else if e.is_connect() {
-                AppError::NetworkError(format!("Connection failed: {}", e))
+                AppError::NetworkError(format!("Connection failed: {e}"))
             } else {
                 AppError::HttpError(e.to_string())
             }
@@ -76,7 +76,7 @@ impl Fetcher for ReqwestFetcher {
         response
             .text()
             .await
-            .map_err(|e| AppError::HttpError(format!("Failed to read response body: {}", e)))
+            .map_err(|e| AppError::HttpError(format!("Failed to read response body: {e}")))
     }
 }
 

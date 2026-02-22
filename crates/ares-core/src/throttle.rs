@@ -114,7 +114,7 @@ impl<F: Fetcher> ThrottledFetcher<F> {
         let host = url.host_str()?;
         let port = url
             .port_or_known_default()
-            .map(|p| format!(":{}", p))
+            .map(|p| format!(":{p}"))
             .unwrap_or_default();
         Some(format!("{}://{}{}", url.scheme(), host, port))
     }
@@ -238,8 +238,7 @@ mod tests {
 
         assert!(
             elapsed >= Duration::from_millis(100),
-            "Second request should have been delayed by at least 100ms, elapsed: {:?}",
-            elapsed
+            "Second request should have been delayed by at least 100ms, elapsed: {elapsed:?}"
         );
     }
 
@@ -256,8 +255,7 @@ mod tests {
 
         assert!(
             elapsed < Duration::from_millis(150),
-            "Different domains should not be throttled against each other, elapsed: {:?}",
-            elapsed
+            "Different domains should not be throttled against each other, elapsed: {elapsed:?}"
         );
     }
 

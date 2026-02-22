@@ -126,7 +126,7 @@ impl std::fmt::Display for CircuitBreakerError {
                     retry_after.as_secs()
                 )
             }
-            CircuitBreakerError::Inner(e) => write!(f, "{}", e),
+            CircuitBreakerError::Inner(e) => write!(f, "{e}"),
         }
     }
 }

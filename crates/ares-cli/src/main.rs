@@ -296,7 +296,7 @@ async fn main() -> Result<()> {
                     let status_filter = status
                         .map(|s| {
                             s.parse::<JobStatus>()
-                                .map_err(|e| anyhow::anyhow!("Invalid status: {}", e))
+                                .map_err(|e| anyhow::anyhow!("Invalid status: {e}"))
                         })
                         .transpose()?;
 
@@ -336,7 +336,7 @@ async fn main() -> Result<()> {
                     let job = job_repo
                         .get_job(id)
                         .await?
-                        .ok_or_else(|| anyhow::anyhow!("Job not found: {}", id))?;
+                        .ok_or_else(|| anyhow::anyhow!("Job not found: {id}"))?;
 
                     println!("Job: {}", job.id);
                     println!("  Status:      {}", job.status);
@@ -347,29 +347,29 @@ async fn main() -> Result<()> {
                     println!("  Created:     {}", job.created_at);
                     println!("  Updated:     {}", job.updated_at);
                     if let Some(started) = job.started_at {
-                        println!("  Started:     {}", started);
+                        println!("  Started:     {started}");
                     }
                     if let Some(completed) = job.completed_at {
-                        println!("  Completed:   {}", completed);
+                        println!("  Completed:   {completed}");
                     }
                     println!("  Retries:     {}/{}", job.retry_count, job.max_retries);
                     if let Some(next) = job.next_retry_at {
-                        println!("  Next retry:  {}", next);
+                        println!("  Next retry:  {next}");
                     }
                     if let Some(err) = &job.error_message {
-                        println!("  Error:       {}", err);
+                        println!("  Error:       {err}");
                     }
                     if let Some(eid) = job.extraction_id {
-                        println!("  Extraction:  {}", eid);
+                        println!("  Extraction:  {eid}");
                     }
                     if let Some(wid) = &job.worker_id {
-                        println!("  Worker:      {}", wid);
+                        println!("  Worker:      {wid}");
                     }
                 }
 
                 JobCommands::Cancel { id } => {
                     job_repo.cancel_job(id).await?;
-                    println!("Cancelled job: {}", id);
+                    println!("Cancelled job: {id}");
                 }
             }
         }
@@ -561,15 +561,13 @@ async fn cmd_history(
 
     if history.is_empty() {
         println!(
-            "No extractions found for url={} schema={}",
-            url, schema_name
+            "No extractions found for url={url} schema={schema_name}"
         );
         return Ok(());
     }
 
     println!(
-        "Extraction history for {} (schema: {}):\n",
-        url, schema_name
+        "Extraction history for {url} (schema: {schema_name}):\n"
     );
 
     for (i, extraction) in history.iter().enumerate() {
