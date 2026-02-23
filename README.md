@@ -21,6 +21,8 @@ Ares fetches web pages, converts HTML to Markdown, and uses LLM APIs to extract 
 
 Conceptual sibling of [Ceres](https://github.com/AndreaBozzo/Ceres) — same philosophy, different temperament. Where Ceres is the nurturing goddess of harvest, Ares charges headfirst into the web and *takes* what it needs.
 
+> 💡 **Claude Code user?** Install the [Ares Claude Skill](https://github.com/AndreaBozzo/Ares-Claude-Skill) to give Claude deep knowledge of Ares — architecture, traits, CLI, REST API, schemas, and extension patterns.
+
 ## Architecture
 
 ![Architecture diagram](docs/assets/aresarchitecture.png)
