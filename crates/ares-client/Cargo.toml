@@ -24,3 +24,7 @@ futures = { workspace = true, optional = true }
 anyhow.workspace = true
 tracing-subscriber.workspace = true
 tokio = { workspace = true, features = ["full"] }
+
+[[example]]
+name = "browser_smoke"
+required-features = ["browser"]

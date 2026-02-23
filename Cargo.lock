@@ -98,6 +98,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "ares-api"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "ares-client",
+ "ares-core",
+ "ares-db",
+ "axum",
+ "chrono",
+ "dotenvy",
+ "http-body-util",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "subtle",
+ "tempfile",
+ "testcontainers",
+ "thiserror 2.0.18",
+ "tokio",
+ "tower",
+ "tower-http",
+ "tower_governor",
+ "tracing",
+ "tracing-subscriber",
+ "utoipa",
+ "utoipa-swagger-ui",
+ "uuid",
+]
+
+[[package]]
 name = "ares-cli"
 version = "0.1.0"
 dependencies = [
@@ -162,36 +192,6 @@ dependencies = [
  "testcontainers",
  "tokio",
  "tracing",
- "uuid",
-]
-
-[[package]]
-name = "ares-server"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "ares-client",
- "ares-core",
- "ares-db",
- "axum",
- "chrono",
- "dotenvy",
- "http-body-util",
- "serde",
- "serde_json",
- "sqlx",
- "subtle",
- "tempfile",
- "testcontainers",
- "thiserror 2.0.18",
- "tokio",
- "tower",
- "tower-http",
- "tower_governor",
- "tracing",
- "tracing-subscriber",
- "utoipa",
- "utoipa-swagger-ui",
  "uuid",
 ]
 

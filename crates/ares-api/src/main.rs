@@ -11,9 +11,9 @@ use tower_http::limit::RequestBodyLimitLayer;
 use tower_http::trace::TraceLayer;
 use tracing_subscriber::EnvFilter;
 
+use ares_api::routes;
+use ares_api::state::AppState;
 use ares_db::{Database, DatabaseConfig};
-use ares_server::routes;
-use ares_server::state::AppState;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {

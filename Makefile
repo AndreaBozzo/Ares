@@ -40,7 +40,7 @@ clean: ## Clean build artifacts
 	cargo clean
 
 docker-build: ## Build the Docker image
-	docker build -t ares-server:latest .
+	docker build -t ares-api:latest .
 
 docker-up: ## Start PostgreSQL with docker compose
 	docker compose up -d

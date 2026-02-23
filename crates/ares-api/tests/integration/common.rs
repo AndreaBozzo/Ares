@@ -9,9 +9,9 @@ use testcontainers::core::{ContainerPort, WaitFor};
 use testcontainers::runners::AsyncRunner;
 use testcontainers::{ContainerAsync, GenericImage, ImageExt};
 
+use ares_api::routes;
+use ares_api::state::AppState;
 use ares_db::Database;
-use ares_server::routes;
-use ares_server::state::AppState;
 
 pub const TEST_API_KEY: &str = "test-secret-key";
 

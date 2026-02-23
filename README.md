@@ -29,7 +29,7 @@ Conceptual sibling of [Ceres](https://github.com/AndreaBozzo/Ceres) — same phi
 
 ```
 ares-cli          CLI interface — arg parsing, wiring, delegation
-ares-server       REST API — Axum HTTP server, OpenAPI/Swagger UI, Bearer auth
+ares-api          REST API — Axum HTTP server, OpenAPI/Swagger UI, Bearer auth
 ares-core         Business logic — ScrapeService, WorkerService, CircuitBreaker, Throttle, traits
 ares-client       External adapters — HTTP fetcher, headless browser fetcher, HTML cleaner, LLM client
 ares-db           PostgreSQL persistence — ExtractionRepository, ScrapeJobRepository, migrations
@@ -123,17 +123,17 @@ Start a background worker that polls the job queue, processes scrape jobs throug
 
 ## REST API
 
-Ares ships a standalone HTTP server (`ares-server`) built on [Axum](https://github.com/tokio-rs/axum) with auto-generated [OpenAPI](https://swagger.io/specification/) documentation.
+Ares ships a standalone HTTP server (`ares-api`) built on [Axum](https://github.com/tokio-rs/axum) with auto-generated [OpenAPI](https://swagger.io/specification/) documentation.
 
 ### Running the server
 
 ```bash
 # Run locally
-cargo run --bin ares-server
+cargo run --bin ares-api
 
 # Or with Docker
-docker build -t ares-server:latest .
-docker run -p 3000:3000 --env-file .env ares-server:latest
+docker build -t ares-api:latest .
+docker run -p 3000:3000 --env-file .env ares-api:latest
 ```
 
 Once running, interactive API docs are available at **`/swagger-ui`**.
@@ -205,7 +205,7 @@ export ARES_MODEL="gemini-2.5-flash"
 
 ```bash
 # Build the image
-docker build -t ares-server:latest .
+docker build -t ares-api:latest .
 
 # Run with docker compose (PostgreSQL + pgAdmin + server)
 docker compose up -d
