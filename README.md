@@ -23,6 +23,9 @@ Conceptual sibling of [Ceres](https://github.com/AndreaBozzo/Ceres) — same phi
 
 > 💡 **Claude Code user?** Install the [Ares Claude Skill](https://github.com/AndreaBozzo/Ares-Claude-Skill) to give Claude deep knowledge of Ares — architecture, traits, CLI, REST API, schemas, and extension patterns.
 
+> **Ares 0.1.0** releases on crates.io on **March 1st, 2026**. This skill will be published to the Anthropic Skill Marketplace shortly after.
+
+
 ## Architecture
 
 ![Architecture diagram](docs/assets/aresarchitecture.png)
