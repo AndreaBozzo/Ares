@@ -115,4 +115,65 @@ mod tests {
         assert!(AppError::Timeout(30).should_trip_circuit());
         assert!(!AppError::SchemaValidationError("bad".into()).should_trip_circuit());
     }
+
+    #[test]
+    fn test_http_error_retryable_on_timeout() {
+        assert!(AppError::HttpError("connection timeout".into()).is_retryable());
+        assert!(AppError::HttpError("connect refused".into()).is_retryable());
+        assert!(AppError::HttpError("connection reset".into()).is_retryable());
+    }
+
+    #[test]
+    fn test_http_error_not_retryable_on_404() {
+        assert!(!AppError::HttpError("HTTP 404 Not Found".into()).is_retryable());
+        assert!(!AppError::HttpError("HTTP 403 Forbidden".into()).is_retryable());
+    }
+
+    #[test]
+    fn test_llm_error_non_retryable_flag() {
+        assert!(
+            !AppError::LlmError {
+                message: "bad request".into(),
+                status_code: 400,
+                retryable: false,
+            }
+            .is_retryable()
+        );
+    }
+
+    #[test]
+    fn test_circuit_trips_on_llm_server_errors() {
+        assert!(
+            AppError::LlmError {
+                message: "rate limited".into(),
+                status_code: 429,
+                retryable: true,
+            }
+            .should_trip_circuit()
+        );
+        assert!(
+            AppError::LlmError {
+                message: "internal error".into(),
+                status_code: 500,
+                retryable: true,
+            }
+            .should_trip_circuit()
+        );
+        assert!(
+            AppError::LlmError {
+                message: "gateway timeout".into(),
+                status_code: 502,
+                retryable: true,
+            }
+            .should_trip_circuit()
+        );
+    }
+
+    #[test]
+    fn test_circuit_no_trip_on_client_errors() {
+        assert!(!AppError::CleanerError("bad html".into()).should_trip_circuit());
+        assert!(!AppError::ConfigError("missing key".into()).should_trip_circuit());
+        assert!(!AppError::DatabaseError("connection lost".into()).should_trip_circuit());
+        assert!(!AppError::HttpError("HTTP 404 Not Found".into()).should_trip_circuit());
+    }
 }

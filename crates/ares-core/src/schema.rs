@@ -396,4 +396,84 @@ mod tests {
         let flat_path = schemas_dir.join("flat.json");
         assert_eq!(resolver.structured_name(&flat_path), None);
     }
+
+    #[test]
+    fn test_create_schema_writes_file_and_registry() {
+        let tmp = TempDir::new().unwrap();
+        let schemas_dir = tmp.path().join("schemas");
+        std::fs::create_dir_all(&schemas_dir).unwrap();
+
+        let resolver = SchemaResolver::new(&schemas_dir);
+        let schema =
+            serde_json::json!({"type": "object", "properties": {"title": {"type": "string"}}});
+
+        resolver.create_schema("blog", "1.0.0", &schema).unwrap();
+
+        // Verify file was written
+        let file_path = schemas_dir.join("blog/1.0.0.json");
+        assert!(file_path.exists());
+        let content: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&file_path).unwrap()).unwrap();
+        assert_eq!(content, schema);
+
+        // Verify registry was updated
+        let registry = resolver.load_registry().unwrap();
+        assert_eq!(registry.get("blog").unwrap(), "1.0.0");
+    }
+
+    #[test]
+    fn test_create_schema_empty_name_errors() {
+        let tmp = TempDir::new().unwrap();
+        let resolver = SchemaResolver::new(tmp.path());
+        let schema = serde_json::json!({"type": "object"});
+
+        let err = resolver.create_schema("", "1.0.0", &schema).unwrap_err();
+        assert!(matches!(err, AppError::SchemaError(_)));
+
+        let err = resolver.create_schema("blog", "", &schema).unwrap_err();
+        assert!(matches!(err, AppError::SchemaError(_)));
+    }
+
+    #[test]
+    fn test_list_schemas_multiple() {
+        let tmp = TempDir::new().unwrap();
+        let schemas_dir = tmp.path().join("schemas");
+        std::fs::create_dir_all(&schemas_dir).unwrap();
+
+        let resolver = SchemaResolver::new(&schemas_dir);
+        let schema = serde_json::json!({"type": "object"});
+
+        resolver.create_schema("blog", "1.0.0", &schema).unwrap();
+        resolver.create_schema("product", "2.0.0", &schema).unwrap();
+
+        let entries = resolver.list_schemas().unwrap();
+        assert_eq!(entries.len(), 2);
+        // Should be sorted alphabetically
+        assert_eq!(entries[0].name, "blog");
+        assert_eq!(entries[1].name, "product");
+        assert_eq!(entries[0].latest_version, "1.0.0");
+        assert_eq!(entries[1].latest_version, "2.0.0");
+    }
+
+    #[test]
+    fn test_list_versions_multiple() {
+        let tmp = TempDir::new().unwrap();
+        let schemas_dir = tmp.path().join("schemas");
+        std::fs::create_dir_all(&schemas_dir).unwrap();
+
+        let resolver = SchemaResolver::new(&schemas_dir);
+        let schema = serde_json::json!({"type": "object"});
+
+        resolver.create_schema("blog", "1.0.0", &schema).unwrap();
+        resolver.create_schema("blog", "2.0.0", &schema).unwrap();
+        resolver.create_schema("blog", "1.1.0", &schema).unwrap();
+
+        let entries = resolver.list_schemas().unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].name, "blog");
+        // Latest should be the last one created
+        assert_eq!(entries[0].latest_version, "1.1.0");
+        // Versions should be sorted
+        assert_eq!(entries[0].versions, vec!["1.0.0", "1.1.0", "2.0.0"]);
+    }
 }

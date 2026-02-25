@@ -281,3 +281,173 @@ async fn get_schema_not_found() {
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(json["error"], "not_found");
 }
+
+// ---------------------------------------------------------------------------
+// Cancel job endpoints
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn cancel_pending_job() {
+    let app = setup_test_app().await;
+
+    // Create a job first
+    let create_body = serde_json::json!({
+        "url": "https://example.com",
+        "schema_name": "test",
+        "schema": {"type": "object"},
+        "model": "gpt-4o-mini",
+        "base_url": "https://api.openai.com/v1"
+    });
+
+    let response = app
+        .router
+        .clone()
+        .oneshot(
+            Request::post("/v1/jobs")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&create_body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let job_id = json["job_id"].as_str().unwrap();
+
+    // Cancel it
+    let response = app
+        .router
+        .oneshot(
+            Request::delete(format!("/v1/jobs/{job_id}"))
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+}
+
+#[tokio::test]
+async fn cancel_nonexistent_job() {
+    let app = setup_test_app().await;
+
+    let fake_id = uuid::Uuid::new_v4();
+    let response = app
+        .router
+        .oneshot(
+            Request::delete(format!("/v1/jobs/{fake_id}"))
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+// ---------------------------------------------------------------------------
+// List jobs endpoint
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn list_jobs_with_status_filter() {
+    let app = setup_test_app().await;
+
+    let create_body = serde_json::json!({
+        "url": "https://example.com/1",
+        "schema_name": "test",
+        "schema": {"type": "object"},
+        "model": "gpt-4o-mini",
+        "base_url": "https://api.openai.com/v1"
+    });
+
+    // Create two jobs
+    for _ in 0..2 {
+        app.router
+            .clone()
+            .oneshot(
+                Request::post("/v1/jobs")
+                    .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&create_body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+    }
+
+    // List with status=pending
+    let response = app
+        .router
+        .oneshot(
+            Request::get("/v1/jobs?status=pending")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["total"], 2);
+    assert_eq!(json["jobs"].as_array().unwrap().len(), 2);
+}
+
+// ---------------------------------------------------------------------------
+// Invalid request body
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn create_job_invalid_body() {
+    let app = setup_test_app().await;
+
+    let response = app
+        .router
+        .oneshot(
+            Request::post("/v1/jobs")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"invalid": true}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // Axum returns 422 for deserialization failures
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+// ---------------------------------------------------------------------------
+// Extractions endpoint
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn get_extractions_empty() {
+    let app = setup_test_app().await;
+
+    let response = app
+        .router
+        .oneshot(
+            Request::get("/v1/extractions?url=https://example.com&schema_name=test")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["total"], 0);
+    assert_eq!(json["extractions"].as_array().unwrap().len(), 0);
+}

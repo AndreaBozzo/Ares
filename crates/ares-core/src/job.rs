@@ -250,4 +250,78 @@ mod tests {
         assert_eq!(req.url, "https://example.com");
         assert_eq!(req.max_retries, Some(5));
     }
+
+    #[test]
+    fn test_can_retry_at_max_retries() {
+        let job = ScrapeJob {
+            id: Uuid::new_v4(),
+            url: "https://example.com".into(),
+            schema_name: "test".into(),
+            schema: serde_json::json!({}),
+            model: "m".into(),
+            base_url: "u".into(),
+            status: JobStatus::Running,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+            started_at: None,
+            completed_at: None,
+            retry_count: 3,
+            max_retries: 3,
+            next_retry_at: None,
+            error_message: None,
+            extraction_id: None,
+            worker_id: None,
+        };
+        assert!(!job.can_retry());
+
+        // One below max should still allow retry
+        let mut job_below = job.clone();
+        job_below.retry_count = 2;
+        assert!(job_below.can_retry());
+    }
+
+    #[test]
+    fn test_can_retry_zero_max() {
+        let job = ScrapeJob {
+            id: Uuid::new_v4(),
+            url: "https://example.com".into(),
+            schema_name: "test".into(),
+            schema: serde_json::json!({}),
+            model: "m".into(),
+            base_url: "u".into(),
+            status: JobStatus::Running,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+            started_at: None,
+            completed_at: None,
+            retry_count: 0,
+            max_retries: 0,
+            next_retry_at: None,
+            error_message: None,
+            extraction_id: None,
+            worker_id: None,
+        };
+        assert!(!job.can_retry());
+    }
+
+    #[test]
+    fn test_delay_for_attempt_zero() {
+        let config = RetryConfig::default();
+        // Attempt 0 should be treated the same as attempt 1
+        assert_eq!(config.delay_for_attempt(0), TimeDelta::minutes(1));
+    }
+
+    #[test]
+    fn test_delay_capped_by_custom_max() {
+        let config = RetryConfig {
+            max_retries: 5,
+            max_delay: TimeDelta::minutes(10),
+        };
+        // Attempt 3 would normally be 30min, but capped to 10min
+        assert_eq!(config.delay_for_attempt(3), TimeDelta::minutes(10));
+        // Attempt 4 would normally be 60min, but capped to 10min
+        assert_eq!(config.delay_for_attempt(4), TimeDelta::minutes(10));
+        // Attempt 1 is 1min, below cap
+        assert_eq!(config.delay_for_attempt(1), TimeDelta::minutes(1));
+    }
 }
