@@ -517,4 +517,88 @@ mod tests {
         assert!(events.contains(&"JobCompleted".to_string()));
         assert!(events.contains(&"Stopped".to_string()));
     }
+
+    #[tokio::test]
+    async fn retryable_error_but_max_retries_exceeded() {
+        let mut job = make_test_job();
+        job.retry_count = 3; // == max_retries, so can_retry() returns false
+        let queue = MockJobQueue::with_job(job.clone());
+        let reporter = MockReporter::new();
+
+        let worker = WorkerService::new(
+            queue.clone(),
+            MockFetcher::with_error(AppError::NetworkError("timeout".into())),
+            MockCleaner::passthrough(),
+            MockExtractorFactory::new(serde_json::json!({})),
+            MockStore::empty(),
+            test_cb(),
+            test_config(),
+        );
+
+        worker.process_job(&job, &reporter).await;
+
+        let failed = queue.failed_jobs.lock().unwrap();
+        assert_eq!(failed.len(), 1);
+        assert!(
+            failed[0].2.is_none(),
+            "Should NOT schedule retry when max retries exceeded"
+        );
+    }
+
+    #[tokio::test]
+    async fn run_loop_claim_error_continues() {
+        let queue = MockJobQueue::with_claim_error(AppError::DatabaseError("conn lost".into()));
+        let reporter = MockReporter::new();
+        let cancel = CancellationToken::new();
+
+        let worker = WorkerService::new(
+            queue.clone(),
+            MockFetcher::new("<html>hi</html>"),
+            MockCleaner::passthrough(),
+            MockExtractorFactory::new(serde_json::json!({})),
+            MockStore::empty(),
+            test_cb(),
+            test_config(),
+        );
+
+        // Cancel after a short delay — the worker should not crash on claim error
+        let cancel_clone = cancel.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            cancel_clone.cancel();
+        });
+
+        let result = worker.run(cancel, &reporter).await;
+        assert!(
+            result.is_ok(),
+            "Worker should shut down gracefully after claim error"
+        );
+
+        let events = reporter.events.lock().unwrap();
+        assert!(events.contains(&"Started".to_string()));
+        assert!(events.contains(&"Stopped".to_string()));
+    }
+
+    #[tokio::test]
+    async fn process_job_store_error_fails_job() {
+        let job = make_test_job();
+        let queue = MockJobQueue::with_job(job.clone());
+        let reporter = MockReporter::new();
+
+        let worker = WorkerService::new(
+            queue.clone(),
+            MockFetcher::new("<html>hi</html>"),
+            MockCleaner::passthrough(),
+            MockExtractorFactory::new(serde_json::json!({"title": "Test"})),
+            MockStore::with_save_error(AppError::DatabaseError("disk full".into())),
+            test_cb(),
+            test_config(),
+        );
+
+        worker.process_job(&job, &reporter).await;
+
+        let failed = queue.failed_jobs.lock().unwrap();
+        assert_eq!(failed.len(), 1);
+        assert!(failed[0].1.contains("disk full"));
+    }
 }

@@ -69,4 +69,54 @@ mod tests {
         assert!(md.contains("Content"));
         assert!(!md.contains("alert"));
     }
+
+    #[test]
+    fn test_strips_style_tags() {
+        let cleaner = HtmdCleaner::new();
+        let html = "<p>Visible</p><style>body { color: red; }</style>";
+        let md = cleaner.clean(html).unwrap();
+        assert!(md.contains("Visible"));
+        assert!(!md.contains("color"));
+    }
+
+    #[test]
+    fn test_strips_nav_and_footer() {
+        let cleaner = HtmdCleaner::new();
+        let html = "<nav><a href='/'>Home</a></nav><main><p>Article</p></main><footer>Copyright 2025</footer>";
+        let md = cleaner.clean(html).unwrap();
+        assert!(md.contains("Article"));
+        assert!(!md.contains("Copyright"));
+    }
+
+    #[test]
+    fn test_strips_noscript_iframe_svg() {
+        let cleaner = HtmdCleaner::new();
+        let html = concat!(
+            "<p>Main</p>",
+            "<noscript>Enable JS</noscript>",
+            "<iframe src='ad.html'>Ad</iframe>",
+            "<svg><circle r='10'/></svg>",
+        );
+        let md = cleaner.clean(html).unwrap();
+        assert!(md.contains("Main"));
+        assert!(!md.contains("Enable JS"));
+        assert!(!md.contains("Ad"));
+        assert!(!md.contains("circle"));
+    }
+
+    #[test]
+    fn test_preserves_content_elements() {
+        let cleaner = HtmdCleaner::new();
+        let html = concat!(
+            "<article><h2>Title</h2></article>",
+            "<section><p>Section text</p></section>",
+            "<div>Div content</div>",
+            "<table><tr><td>Cell</td></tr></table>",
+        );
+        let md = cleaner.clean(html).unwrap();
+        assert!(md.contains("Title"));
+        assert!(md.contains("Section text"));
+        assert!(md.contains("Div content"));
+        assert!(md.contains("Cell"));
+    }
 }
