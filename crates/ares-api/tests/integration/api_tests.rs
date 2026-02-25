@@ -312,8 +312,11 @@ async fn cancel_pending_job() {
         .await
         .unwrap();
 
+    assert_eq!(response.status(), StatusCode::ACCEPTED);
+
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["status"], "pending");
     let job_id = json["job_id"].as_str().unwrap();
 
     // Cancel it
@@ -368,7 +371,8 @@ async fn list_jobs_with_status_filter() {
 
     // Create two jobs
     for _ in 0..2 {
-        app.router
+        let response = app
+            .router
             .clone()
             .oneshot(
                 Request::post("/v1/jobs")
@@ -379,6 +383,7 @@ async fn list_jobs_with_status_filter() {
             )
             .await
             .unwrap();
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
     }
 
     // List with status=pending

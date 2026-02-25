@@ -143,11 +143,12 @@ mod tests {
 
     #[test]
     fn test_circuit_trips_on_llm_server_errors() {
+        // With retryable: false to prove the status-code logic is exercised
         assert!(
             AppError::LlmError {
                 message: "rate limited".into(),
                 status_code: 429,
-                retryable: true,
+                retryable: false,
             }
             .should_trip_circuit()
         );
@@ -155,7 +156,7 @@ mod tests {
             AppError::LlmError {
                 message: "internal error".into(),
                 status_code: 500,
-                retryable: true,
+                retryable: false,
             }
             .should_trip_circuit()
         );
@@ -163,6 +164,26 @@ mod tests {
             AppError::LlmError {
                 message: "gateway timeout".into(),
                 status_code: 502,
+                retryable: false,
+            }
+            .should_trip_circuit()
+        );
+
+        // A 400 with retryable: false should NOT trip the circuit
+        assert!(
+            !AppError::LlmError {
+                message: "bad request".into(),
+                status_code: 400,
+                retryable: false,
+            }
+            .should_trip_circuit()
+        );
+
+        // retryable: true alone is still enough to trip
+        assert!(
+            AppError::LlmError {
+                message: "transient".into(),
+                status_code: 400,
                 retryable: true,
             }
             .should_trip_circuit()

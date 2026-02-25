@@ -224,9 +224,14 @@ impl SchemaResolver {
             ))
         })?;
 
-        // Update registry — set this version as latest
+        // Update registry — only advance latest when the new version is higher
         let mut registry = self.load_registry()?;
-        registry.insert(name.to_string(), version.to_string());
+        let should_update = registry
+            .get(name)
+            .is_none_or(|current| version_gt(version, current));
+        if should_update {
+            registry.insert(name.to_string(), version.to_string());
+        }
         let registry_path = self.schemas_dir.join("registry.json");
         let registry_json = serde_json::to_string_pretty(&registry)
             .map_err(|e| AppError::SchemaError(e.to_string()))?;
@@ -238,6 +243,34 @@ impl SchemaResolver {
         })?;
 
         Ok(())
+    }
+}
+
+/// Compare two dot-separated version strings (e.g. "1.2.3" > "1.1.0").
+///
+/// Returns `true` if `a` is strictly greater than `b`.
+/// Non-numeric segments are compared lexicographically as a fallback.
+fn version_gt(a: &str, b: &str) -> bool {
+    let mut a_parts = a.split('.');
+    let mut b_parts = b.split('.');
+
+    loop {
+        match (a_parts.next(), b_parts.next()) {
+            (Some(ap), Some(bp)) => {
+                let cmp = match (ap.parse::<u64>(), bp.parse::<u64>()) {
+                    (Ok(an), Ok(bn)) => an.cmp(&bn),
+                    _ => ap.cmp(bp),
+                };
+                match cmp {
+                    std::cmp::Ordering::Greater => return true,
+                    std::cmp::Ordering::Less => return false,
+                    std::cmp::Ordering::Equal => continue,
+                }
+            }
+            (Some(_), None) => return true,  // a has more segments
+            (None, Some(_)) => return false, // b has more segments
+            (None, None) => return false,    // equal
+        }
     }
 }
 
@@ -471,8 +504,8 @@ mod tests {
         let entries = resolver.list_schemas().unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].name, "blog");
-        // Latest should be the last one created
-        assert_eq!(entries[0].latest_version, "1.1.0");
+        // Latest should be the highest version, not the last created
+        assert_eq!(entries[0].latest_version, "2.0.0");
         // Versions should be sorted
         assert_eq!(entries[0].versions, vec!["1.0.0", "1.1.0", "2.0.0"]);
     }
