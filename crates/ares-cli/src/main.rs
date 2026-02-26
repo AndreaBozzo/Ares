@@ -300,7 +300,7 @@ async fn main() -> Result<()> {
                         })
                         .transpose()?;
 
-                    let jobs = job_repo.list_jobs(status_filter, limit).await?;
+                    let jobs = job_repo.list_jobs(status_filter, limit, 0).await?;
 
                     if jobs.is_empty() {
                         println!("No jobs found.");
@@ -557,7 +557,7 @@ async fn cmd_history(
     limit: usize,
     repo: &ExtractionRepository,
 ) -> Result<()> {
-    let history = repo.get_history(url, schema_name, limit).await?;
+    let history = repo.get_history(url, schema_name, limit, 0).await?;
 
     if history.is_empty() {
         println!("No extractions found for url={url} schema={schema_name}");

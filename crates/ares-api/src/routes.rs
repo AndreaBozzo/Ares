@@ -34,6 +34,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/jobs", get(list_jobs))
         .route("/v1/jobs/{id}", get(get_job))
         .route("/v1/jobs/{id}", delete(cancel_job))
+        .route("/v1/jobs/{id}/retry", post(retry_job))
         .route("/v1/extractions", get(get_extractions))
         .route("/v1/schemas", get(list_schemas))
         .route("/v1/schemas", post(create_schema))
@@ -182,12 +183,19 @@ pub async fn list_jobs(
         .transpose()?;
 
     let limit = query.limit.unwrap_or(20).min(100);
-    let jobs = state.db.job_repo().list_jobs(status_filter, limit).await?;
-    let total = jobs.len();
+    let offset = query.offset.unwrap_or(0);
+    let jobs = state
+        .db
+        .job_repo()
+        .list_jobs(status_filter, limit, offset)
+        .await?;
+    let total = state.db.job_repo().count_jobs(status_filter).await? as usize;
 
     let response = JobListResponse {
         jobs: jobs.into_iter().map(JobResponse::from).collect(),
         total,
+        limit,
+        offset,
     };
 
     Ok(axum::Json(response))
@@ -269,6 +277,64 @@ pub async fn cancel_job(
 }
 
 #[utoipa::path(
+    post,
+    path = "/v1/jobs/{id}/retry",
+    params(
+        ("id" = Uuid, Path, description = "Job ID")
+    ),
+    responses(
+        (status = 200, description = "Job retried", body = JobResponse),
+        (status = 404, description = "Not found", body = crate::dto::ErrorResponse),
+        (status = 409, description = "Conflict", body = crate::dto::ErrorResponse),
+        (status = 401, description = "Unauthorized"),
+    ),
+    security(("bearer" = [])),
+    tag = "jobs"
+)]
+pub async fn retry_job(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+) -> Result<impl IntoResponse, ApiError> {
+    // Check the job exists first
+    let job = state.db.job_repo().get_job(id).await?;
+    match job {
+        Some(job)
+            if !matches!(
+                job.status,
+                ares_core::job::JobStatus::Failed | ares_core::job::JobStatus::Cancelled
+            ) =>
+        {
+            let body = crate::dto::ErrorResponse {
+                error: "conflict".to_string(),
+                message: format!("Job {id} is not in a retryable state: {}", job.status),
+            };
+            Ok((StatusCode::CONFLICT, axum::Json(body)).into_response())
+        }
+        Some(_) => {
+            let retried = state.db.job_repo().retry_job(id).await?;
+            match retried {
+                Some(job) => Ok(axum::Json(JobResponse::from(job)).into_response()),
+                None => {
+                    // Race condition: status changed between check and update
+                    let body = crate::dto::ErrorResponse {
+                        error: "conflict".to_string(),
+                        message: format!("Job {id} is no longer in a retryable state"),
+                    };
+                    Ok((StatusCode::CONFLICT, axum::Json(body)).into_response())
+                }
+            }
+        }
+        None => {
+            let body = crate::dto::ErrorResponse {
+                error: "not_found".to_string(),
+                message: format!("Job not found: {id}"),
+            };
+            Ok((StatusCode::NOT_FOUND, axum::Json(body)).into_response())
+        }
+    }
+}
+
+#[utoipa::path(
     get,
     path = "/v1/extractions",
     params(ExtractionHistoryQuery),
@@ -284,12 +350,17 @@ pub async fn get_extractions(
     Query(query): Query<ExtractionHistoryQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
     let limit = query.limit.unwrap_or(10).min(100);
+    let offset = query.offset.unwrap_or(0);
     let extractions = state
         .db
         .extraction_repo()
-        .get_history(&query.url, &query.schema_name, limit)
+        .get_history(&query.url, &query.schema_name, limit, offset)
         .await?;
-    let total = extractions.len();
+    let total = state
+        .db
+        .extraction_repo()
+        .count_history(&query.url, &query.schema_name)
+        .await? as usize;
 
     let response = ExtractionHistoryResponse {
         extractions: extractions
@@ -297,6 +368,8 @@ pub async fn get_extractions(
             .map(ExtractionResponse::from)
             .collect(),
         total,
+        limit,
+        offset,
     };
 
     Ok(axum::Json(response))

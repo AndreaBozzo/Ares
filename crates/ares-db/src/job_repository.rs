@@ -70,6 +70,25 @@ impl TryFrom<ScrapeJobRow> for ScrapeJob {
     }
 }
 
+impl ScrapeJobRepository {
+    /// Count jobs, optionally filtered by status.
+    pub async fn count_jobs(&self, status: Option<JobStatus>) -> Result<i64, AppError> {
+        let (count,): (i64,) = if let Some(status) = status {
+            sqlx::query_as(r#"SELECT COUNT(*) FROM scrape_jobs WHERE status = $1"#)
+                .bind(status.as_str())
+                .fetch_one(&self.pool)
+                .await
+        } else {
+            sqlx::query_as(r#"SELECT COUNT(*) FROM scrape_jobs"#)
+                .fetch_one(&self.pool)
+                .await
+        }
+        .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+
+        Ok(count)
+    }
+}
+
 impl JobQueue for ScrapeJobRepository {
     async fn create_job(&self, request: CreateScrapeJobRequest) -> Result<ScrapeJob, AppError> {
         let row = sqlx::query_as::<_, ScrapeJobRow>(
@@ -200,6 +219,7 @@ impl JobQueue for ScrapeJobRepository {
         &self,
         status: Option<JobStatus>,
         limit: usize,
+        offset: usize,
     ) -> Result<Vec<ScrapeJob>, AppError> {
         let rows = if let Some(status) = status {
             sqlx::query_as::<_, ScrapeJobRow>(
@@ -207,11 +227,12 @@ impl JobQueue for ScrapeJobRepository {
                 SELECT * FROM scrape_jobs
                 WHERE status = $1
                 ORDER BY created_at DESC
-                LIMIT $2
+                LIMIT $2 OFFSET $3
                 "#,
             )
             .bind(status.as_str())
             .bind(limit as i64)
+            .bind(offset as i64)
             .fetch_all(&self.pool)
             .await
         } else {
@@ -219,10 +240,11 @@ impl JobQueue for ScrapeJobRepository {
                 r#"
                 SELECT * FROM scrape_jobs
                 ORDER BY created_at DESC
-                LIMIT $1
+                LIMIT $1 OFFSET $2
                 "#,
             )
             .bind(limit as i64)
+            .bind(offset as i64)
             .fetch_all(&self.pool)
             .await
         }
@@ -231,6 +253,31 @@ impl JobQueue for ScrapeJobRepository {
         rows.into_iter()
             .map(ScrapeJob::try_from)
             .collect::<Result<Vec<_>, _>>()
+    }
+
+    async fn retry_job(&self, job_id: Uuid) -> Result<Option<ScrapeJob>, AppError> {
+        let row = sqlx::query_as::<_, ScrapeJobRow>(
+            r#"
+            UPDATE scrape_jobs
+            SET status = 'pending',
+                retry_count = 0,
+                error_message = NULL,
+                worker_id = NULL,
+                started_at = NULL,
+                completed_at = NULL,
+                extraction_id = NULL,
+                next_retry_at = NULL,
+                updated_at = NOW()
+            WHERE id = $1 AND status IN ('failed', 'cancelled')
+            RETURNING *
+            "#,
+        )
+        .bind(job_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+
+        row.map(ScrapeJob::try_from).transpose()
     }
 
     async fn release_job(&self, job_id: Uuid) -> Result<(), AppError> {

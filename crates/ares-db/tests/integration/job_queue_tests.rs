@@ -213,13 +213,19 @@ async fn list_jobs_with_status_filter() {
     repo.create_job(test_request()).await.unwrap();
     repo.claim_job("worker-1").await.unwrap();
 
-    let pending = repo.list_jobs(Some(JobStatus::Pending), 10).await.unwrap();
+    let pending = repo
+        .list_jobs(Some(JobStatus::Pending), 10, 0)
+        .await
+        .unwrap();
     assert_eq!(pending.len(), 1);
 
-    let running = repo.list_jobs(Some(JobStatus::Running), 10).await.unwrap();
+    let running = repo
+        .list_jobs(Some(JobStatus::Running), 10, 0)
+        .await
+        .unwrap();
     assert_eq!(running.len(), 1);
 
-    let all = repo.list_jobs(None, 10).await.unwrap();
+    let all = repo.list_jobs(None, 10, 0).await.unwrap();
     assert_eq!(all.len(), 2);
 }
 

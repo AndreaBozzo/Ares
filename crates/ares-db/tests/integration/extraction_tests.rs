@@ -110,7 +110,7 @@ async fn get_history_returns_ordered_with_limit() {
     }
 
     let history = repo
-        .get_history("https://example.com", "blog", 3)
+        .get_history("https://example.com", "blog", 3, 0)
         .await
         .unwrap();
 

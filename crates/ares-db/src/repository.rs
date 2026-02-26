@@ -67,6 +67,7 @@ impl ExtractionRepository {
         url: &str,
         schema_name: &str,
         limit: usize,
+        offset: usize,
     ) -> Result<Vec<Extraction>, AppError> {
         let rows = sqlx::query_as::<_, ExtractionRow>(
             r#"
@@ -74,17 +75,32 @@ impl ExtractionRepository {
             FROM extractions
             WHERE url = $1 AND schema_name = $2
             ORDER BY created_at DESC
-            LIMIT $3
+            LIMIT $3 OFFSET $4
             "#,
         )
         .bind(url)
         .bind(schema_name)
         .bind(limit as i64)
+        .bind(offset as i64)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
         Ok(rows.into_iter().map(Into::into).collect())
+    }
+
+    /// Count extractions for a URL + schema pair.
+    pub async fn count_history(&self, url: &str, schema_name: &str) -> Result<i64, AppError> {
+        let (count,): (i64,) = sqlx::query_as(
+            r#"SELECT COUNT(*) FROM extractions WHERE url = $1 AND schema_name = $2"#,
+        )
+        .bind(url)
+        .bind(schema_name)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+
+        Ok(count)
     }
 
     /// Check database connectivity.
@@ -147,7 +163,8 @@ impl ares_core::traits::ExtractionStore for ExtractionRepository {
         url: &str,
         schema_name: &str,
         limit: usize,
+        offset: usize,
     ) -> Result<Vec<Extraction>, AppError> {
-        ExtractionRepository::get_history(self, url, schema_name, limit).await
+        ExtractionRepository::get_history(self, url, schema_name, limit, offset).await
     }
 }

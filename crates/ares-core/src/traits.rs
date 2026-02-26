@@ -58,6 +58,7 @@ pub trait ExtractionStore: Send + Sync + Clone {
         url: &str,
         schema_name: &str,
         limit: usize,
+        offset: usize,
     ) -> impl Future<Output = Result<Vec<Extraction>, AppError>> + Send;
 }
 
@@ -83,6 +84,7 @@ impl ExtractionStore for NullStore {
         _url: &str,
         _schema_name: &str,
         _limit: usize,
+        _offset: usize,
     ) -> Result<Vec<Extraction>, AppError> {
         Ok(vec![])
     }

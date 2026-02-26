@@ -50,7 +50,15 @@ pub trait JobQueue: Send + Sync + Clone {
         &self,
         status: Option<JobStatus>,
         limit: usize,
+        offset: usize,
     ) -> impl Future<Output = Result<Vec<ScrapeJob>, AppError>> + Send;
+
+    /// Reset a failed or cancelled job back to pending for reprocessing.
+    /// Returns `None` if the job doesn't exist or isn't in a retryable state.
+    fn retry_job(
+        &self,
+        job_id: Uuid,
+    ) -> impl Future<Output = Result<Option<ScrapeJob>, AppError>> + Send;
 
     // TODO(#3): Currently unused — will be needed for per-job release during crawl cancellation
     fn release_job(&self, job_id: Uuid) -> impl Future<Output = Result<(), AppError>> + Send;
