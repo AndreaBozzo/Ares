@@ -74,7 +74,7 @@ impl ExtractionRepository {
             SELECT id, url, schema_name, extracted_data, raw_content_hash, data_hash, model, created_at
             FROM extractions
             WHERE url = $1 AND schema_name = $2
-            ORDER BY created_at DESC
+            ORDER BY created_at DESC, id DESC
             LIMIT $3 OFFSET $4
             "#,
         )

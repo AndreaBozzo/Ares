@@ -226,7 +226,7 @@ impl JobQueue for ScrapeJobRepository {
                 r#"
                 SELECT * FROM scrape_jobs
                 WHERE status = $1
-                ORDER BY created_at DESC
+                ORDER BY created_at DESC, id DESC
                 LIMIT $2 OFFSET $3
                 "#,
             )
@@ -239,7 +239,7 @@ impl JobQueue for ScrapeJobRepository {
             sqlx::query_as::<_, ScrapeJobRow>(
                 r#"
                 SELECT * FROM scrape_jobs
-                ORDER BY created_at DESC
+                ORDER BY created_at DESC, id DESC
                 LIMIT $1 OFFSET $2
                 "#,
             )

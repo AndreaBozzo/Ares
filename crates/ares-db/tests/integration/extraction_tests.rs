@@ -119,6 +119,15 @@ async fn get_history_returns_ordered_with_limit() {
     assert_eq!(history[0].extracted_data["index"], 4);
     assert_eq!(history[1].extracted_data["index"], 3);
     assert_eq!(history[2].extracted_data["index"], 2);
+
+    // Test non-zero offset
+    let page2 = repo
+        .get_history("https://example.com", "blog", 2, 2)
+        .await
+        .unwrap();
+    assert_eq!(page2.len(), 2);
+    assert_eq!(page2[0].extracted_data["index"], 2);
+    assert_eq!(page2[1].extracted_data["index"], 1);
 }
 
 #[tokio::test]

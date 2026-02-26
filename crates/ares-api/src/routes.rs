@@ -295,41 +295,31 @@ pub async fn retry_job(
     State(state): State<Arc<AppState>>,
     Path(id): Path<Uuid>,
 ) -> Result<impl IntoResponse, ApiError> {
-    // Check the job exists first
-    let job = state.db.job_repo().get_job(id).await?;
-    match job {
-        Some(job)
-            if !matches!(
-                job.status,
-                ares_core::job::JobStatus::Failed | ares_core::job::JobStatus::Cancelled
-            ) =>
-        {
-            let body = crate::dto::ErrorResponse {
-                error: "conflict".to_string(),
-                message: format!("Job {id} is not in a retryable state: {}", job.status),
-            };
-            Ok((StatusCode::CONFLICT, axum::Json(body)).into_response())
-        }
-        Some(_) => {
-            let retried = state.db.job_repo().retry_job(id).await?;
-            match retried {
-                Some(job) => Ok(axum::Json(JobResponse::from(job)).into_response()),
+    // Attempt the atomic retry first to avoid TOCTOU races.
+    let retried = state.db.job_repo().retry_job(id).await?;
+
+    match retried {
+        Some(job) => Ok(axum::Json(JobResponse::from(job)).into_response()),
+        None => {
+            // No row updated: either the job doesn't exist or isn't retryable.
+            // Follow-up read to distinguish 404 vs 409.
+            let job = state.db.job_repo().get_job(id).await?;
+            match job {
                 None => {
-                    // Race condition: status changed between check and update
+                    let body = crate::dto::ErrorResponse {
+                        error: "not_found".to_string(),
+                        message: format!("Job not found: {id}"),
+                    };
+                    Ok((StatusCode::NOT_FOUND, axum::Json(body)).into_response())
+                }
+                Some(job) => {
                     let body = crate::dto::ErrorResponse {
                         error: "conflict".to_string(),
-                        message: format!("Job {id} is no longer in a retryable state"),
+                        message: format!("Job {id} is not in a retryable state: {}", job.status),
                     };
                     Ok((StatusCode::CONFLICT, axum::Json(body)).into_response())
                 }
             }
-        }
-        None => {
-            let body = crate::dto::ErrorResponse {
-                error: "not_found".to_string(),
-                message: format!("Job not found: {id}"),
-            };
-            Ok((StatusCode::NOT_FOUND, axum::Json(body)).into_response())
         }
     }
 }

@@ -230,6 +230,26 @@ async fn list_jobs_with_status_filter() {
 }
 
 #[tokio::test]
+async fn list_jobs_with_offset() {
+    let (pool, _container) = setup_test_db().await;
+    let repo = ScrapeJobRepository::new(pool);
+
+    for _ in 0..3 {
+        repo.create_job(test_request()).await.unwrap();
+    }
+
+    let page1 = repo.list_jobs(None, 2, 0).await.unwrap();
+    assert_eq!(page1.len(), 2);
+
+    let page2 = repo.list_jobs(None, 2, 2).await.unwrap();
+    assert_eq!(page2.len(), 1);
+
+    // Pages should not overlap
+    assert_ne!(page1[0].id, page2[0].id);
+    assert_ne!(page1[1].id, page2[0].id);
+}
+
+#[tokio::test]
 async fn count_by_status() {
     let (pool, _container) = setup_test_db().await;
     let repo = ScrapeJobRepository::new(pool);
