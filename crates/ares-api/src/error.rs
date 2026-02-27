@@ -20,6 +20,7 @@ impl IntoResponse for ApiError {
             AppError::SchemaValidationError(_) | AppError::SchemaError(_) => {
                 (StatusCode::BAD_REQUEST, "validation_error")
             }
+            AppError::SchemaNotFound { .. } => (StatusCode::NOT_FOUND, "not_found"),
             AppError::SerializationError(_) => (StatusCode::BAD_REQUEST, "serialization_error"),
             AppError::DatabaseError(_) => (StatusCode::INTERNAL_SERVER_ERROR, "database_error"),
             AppError::ConfigError(_) => (StatusCode::INTERNAL_SERVER_ERROR, "config_error"),

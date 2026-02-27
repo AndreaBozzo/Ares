@@ -186,7 +186,7 @@ impl SchemaResolver {
             }
         }
 
-        versions.sort();
+        versions.sort_by(|a, b| version_cmp(a, b));
         Ok(versions)
     }
 
@@ -208,9 +208,10 @@ impl SchemaResolver {
 
         let schema_path = self.schemas_dir.join(name).join(format!("{version}.json"));
         if !schema_path.exists() {
-            return Err(AppError::SchemaError(format!(
-                "Schema not found: {name}@{version}"
-            )));
+            return Err(AppError::SchemaNotFound {
+                name: name.to_string(),
+                version: version.to_string(),
+            });
         }
 
         let pretty = serde_json::to_string_pretty(schema)
@@ -239,9 +240,10 @@ impl SchemaResolver {
 
         let schema_path = self.schemas_dir.join(name).join(format!("{version}.json"));
         if !schema_path.exists() {
-            return Err(AppError::SchemaError(format!(
-                "Schema not found: {name}@{version}"
-            )));
+            return Err(AppError::SchemaNotFound {
+                name: name.to_string(),
+                version: version.to_string(),
+            });
         }
 
         std::fs::remove_file(&schema_path).map_err(|e| {
@@ -334,11 +336,11 @@ impl SchemaResolver {
     }
 }
 
-/// Compare two dot-separated version strings (e.g. "1.2.3" > "1.1.0").
+/// Compare two dot-separated version strings semantically (e.g. "1.10.0" > "1.2.0").
 ///
-/// Returns `true` if `a` is strictly greater than `b`.
-/// Non-numeric segments are compared lexicographically as a fallback.
-fn version_gt(a: &str, b: &str) -> bool {
+/// Numeric segments are compared numerically; non-numeric segments fall back
+/// to lexicographic comparison.
+fn version_cmp(a: &str, b: &str) -> std::cmp::Ordering {
     let mut a_parts = a.split('.');
     let mut b_parts = b.split('.');
 
@@ -349,17 +351,20 @@ fn version_gt(a: &str, b: &str) -> bool {
                     (Ok(an), Ok(bn)) => an.cmp(&bn),
                     _ => ap.cmp(bp),
                 };
-                match cmp {
-                    std::cmp::Ordering::Greater => return true,
-                    std::cmp::Ordering::Less => return false,
-                    std::cmp::Ordering::Equal => continue,
+                if cmp != std::cmp::Ordering::Equal {
+                    return cmp;
                 }
             }
-            (Some(_), None) => return true,  // a has more segments
-            (None, Some(_)) => return false, // b has more segments
-            (None, None) => return false,    // equal
+            (Some(_), None) => return std::cmp::Ordering::Greater,
+            (None, Some(_)) => return std::cmp::Ordering::Less,
+            (None, None) => return std::cmp::Ordering::Equal,
         }
     }
+}
+
+/// Returns `true` if version `a` is strictly greater than `b`.
+fn version_gt(a: &str, b: &str) -> bool {
+    version_cmp(a, b) == std::cmp::Ordering::Greater
 }
 
 /// Derive a schema name from a file path.
@@ -627,8 +632,7 @@ mod tests {
             .update_schema("missing", "1.0.0", &serde_json::json!({}))
             .unwrap_err();
 
-        assert!(matches!(err, AppError::SchemaError(_)));
-        assert!(err.to_string().contains("not found"));
+        assert!(matches!(err, AppError::SchemaNotFound { .. }));
     }
 
     #[test]
@@ -693,8 +697,7 @@ mod tests {
         let resolver = SchemaResolver::new(&schemas_dir);
         let err = resolver.delete_schema("ghost", "9.9.9").unwrap_err();
 
-        assert!(matches!(err, AppError::SchemaError(_)));
-        assert!(err.to_string().contains("not found"));
+        assert!(matches!(err, AppError::SchemaNotFound { .. }));
     }
 
     #[test]
@@ -714,6 +717,27 @@ mod tests {
 
         let registry = resolver.load_registry().unwrap();
         assert_eq!(registry.get("blog").unwrap(), "1.0.0");
+    }
+
+    #[test]
+    fn test_delete_latest_with_semver_ordering() {
+        let tmp = TempDir::new().unwrap();
+        let schemas_dir = tmp.path().join("schemas");
+        std::fs::create_dir_all(&schemas_dir).unwrap();
+
+        let resolver = SchemaResolver::new(&schemas_dir);
+        let schema = serde_json::json!({"type": "object"});
+
+        // Create versions where lexicographic and semantic ordering differ
+        resolver.create_schema("blog", "1.2.0", &schema).unwrap();
+        resolver.create_schema("blog", "1.10.0", &schema).unwrap();
+        resolver.create_schema("blog", "2.0.0", &schema).unwrap();
+
+        // Delete latest (2.0.0) — registry should fall back to 1.10.0, not 1.2.0
+        resolver.delete_schema("blog", "2.0.0").unwrap();
+
+        let registry = resolver.load_registry().unwrap();
+        assert_eq!(registry.get("blog").unwrap(), "1.10.0");
     }
 
     #[test]

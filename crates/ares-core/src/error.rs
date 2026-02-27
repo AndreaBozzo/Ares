@@ -27,6 +27,10 @@ pub enum AppError {
     #[error("Schema error: {0}")]
     SchemaError(String),
 
+    /// A specific schema version was not found.
+    #[error("Schema not found: {name}@{version}")]
+    SchemaNotFound { name: String, version: String },
+
     /// JSON serialization/deserialization failed.
     #[error("Serialization error: {0}")]
     SerializationError(#[from] serde_json::Error),

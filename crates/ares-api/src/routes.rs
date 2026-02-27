@@ -505,7 +505,7 @@ pub async fn update_schema_version(
             };
             Ok(axum::Json(response).into_response())
         }
-        Err(ares_core::AppError::SchemaError(msg)) if msg.contains("not found") => {
+        Err(ares_core::AppError::SchemaNotFound { .. }) => {
             let body = crate::dto::ErrorResponse {
                 error: "not_found".to_string(),
                 message: format!("Schema not found: {name}@{version}"),
@@ -540,7 +540,7 @@ pub async fn delete_schema_version(
 
     match resolver.delete_schema(&name, &version) {
         Ok(()) => Ok(StatusCode::NO_CONTENT.into_response()),
-        Err(ares_core::AppError::SchemaError(msg)) if msg.contains("not found") => {
+        Err(ares_core::AppError::SchemaNotFound { .. }) => {
             let body = crate::dto::ErrorResponse {
                 error: "not_found".to_string(),
                 message: format!("Schema not found: {schema_ref}"),
