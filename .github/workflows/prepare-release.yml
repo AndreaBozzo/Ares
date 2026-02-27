@@ -66,10 +66,14 @@ jobs:
           # Update workspace version
           sed -i "s/^version = \".*\"/version = \"${VERSION}\"/" Cargo.toml
 
-          # Update internal crate dependencies (keep the path for local development)
-          sed -i "s/ares-core = { version = \"[^\"]*\", path/ares-core = { version = \"${VERSION}\", path/" Cargo.toml
-          sed -i "s/ares-client = { version = \"[^\"]*\", path/ares-client = { version = \"${VERSION}\", path/" Cargo.toml
-          sed -i "s/ares-db = { version = \"[^\"]*\", path/ares-db = { version = \"${VERSION}\", path/" Cargo.toml
+          # Update internal crate dependencies (insert version if missing, update if present)
+          for crate in ares-core ares-client ares-db; do
+            if grep -q "${crate} = { version" Cargo.toml; then
+              sed -i "s/${crate} = { version = \"[^\"]*\", path/${crate} = { version = \"${VERSION}\", path/" Cargo.toml
+            else
+              sed -i "s/${crate} = { path/${crate} = { version = \"${VERSION}\", path/" Cargo.toml
+            fi
+          done
 
           # Update Cargo.lock
           cargo check --quiet 2>/dev/null || true

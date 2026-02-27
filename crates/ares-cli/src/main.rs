@@ -250,7 +250,7 @@ async fn main() -> Result<()> {
 
             if browser {
                 let fetcher = create_browser_fetcher(opts.fetch_timeout).await?;
-                if let Some(ms) = throttle {
+                if let Some(ms) = throttle.filter(|&ms| ms > 0) {
                     let fetcher = ThrottledFetcher::new(
                         fetcher,
                         ThrottleConfig::new(Duration::from_millis(ms)),
@@ -266,7 +266,7 @@ async fn main() -> Result<()> {
                 }
                 .context("Failed to create HTTP client")?
                 .allow_private_urls();
-                if let Some(ms) = throttle {
+                if let Some(ms) = throttle.filter(|&ms| ms > 0) {
                     let fetcher = ThrottledFetcher::new(
                         fetcher,
                         ThrottleConfig::new(Duration::from_millis(ms)),
@@ -422,7 +422,7 @@ async fn main() -> Result<()> {
 
             if browser {
                 let fetcher = create_browser_fetcher(worker_opts.fetch_timeout).await?;
-                if let Some(ms) = throttle {
+                if let Some(ms) = throttle.filter(|&ms| ms > 0) {
                     let fetcher = ThrottledFetcher::new(
                         fetcher,
                         ThrottleConfig::new(Duration::from_millis(ms)),
@@ -438,7 +438,7 @@ async fn main() -> Result<()> {
                 }
                 .context("Failed to create HTTP client")?
                 .allow_private_urls();
-                if let Some(ms) = throttle {
+                if let Some(ms) = throttle.filter(|&ms| ms > 0) {
                     let fetcher = ThrottledFetcher::new(
                         fetcher,
                         ThrottleConfig::new(Duration::from_millis(ms)),
