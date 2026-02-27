@@ -37,13 +37,13 @@ flowchart TB
   LLM_API[("LLM API (OpenAI/Gemini)")]
     
   %% Entrypoints
-  subgraph Interfaces [Interfaces]
+  subgraph Interfaces["Interfaces"]
     CLI["ares-cli\n(Command Line Interface)"]
     API["ares-api\n(REST API / Axum / Swagger UI)"]
   end
 
   %% Core Business Logic
-  subgraph Core [ares-core (Business Logic)]
+  subgraph Core["ares-core (Business Logic)"]
     Traits{{"Traits\n(Fetcher, Extractor, JobQueue)"}}
     ScrapeSvc["ScrapeService\n(One-shot scraping)"]
     WorkerSvc["WorkerService\n(Background polling)"]
@@ -55,7 +55,7 @@ flowchart TB
   end
 
   %% External Adapters
-  subgraph Client [ares-client (External Adapters)]
+  subgraph Client["ares-client (External Adapters)"]
     Reqwest["ReqwestFetcher\n(Static HTML)"]
     Browser["BrowserFetcher\n(Chromium SPA)"]
     Cleaner["HTMD Cleaner\n(HTML to Markdown)"]
@@ -63,7 +63,7 @@ flowchart TB
   end
 
   %% Database
-  subgraph Database [ares-db (Persistence)]
+  subgraph Database["ares-db (Persistence)"]
     DB[(PostgreSQL)]
     JobRepo["JobRepository"]
     ExtRepo["ExtractionRepository"]
