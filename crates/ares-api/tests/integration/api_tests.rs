@@ -283,6 +283,313 @@ async fn get_schema_not_found() {
 }
 
 // ---------------------------------------------------------------------------
+// Update schema endpoints
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn update_schema_returns_200() {
+    let app = setup_test_app().await;
+
+    let original_schema =
+        serde_json::json!({"type": "object", "properties": {"title": {"type": "string"}}});
+
+    // Create schema
+    let create_body = serde_json::json!({
+        "name": "blog",
+        "version": "1.0.0",
+        "schema": original_schema,
+    });
+
+    let response = app
+        .router
+        .clone()
+        .oneshot(
+            Request::post("/v1/schemas")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&create_body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CREATED);
+
+    // Update schema
+    let updated_schema = serde_json::json!({"type": "object", "properties": {"title": {"type": "string"}, "author": {"type": "string"}}});
+    let update_body = serde_json::json!({"schema": updated_schema});
+
+    let response = app
+        .router
+        .clone()
+        .oneshot(
+            Request::put("/v1/schemas/blog/1.0.0")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&update_body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["name"], "blog");
+    assert_eq!(json["version"], "1.0.0");
+    assert_eq!(json["schema"], updated_schema);
+
+    // Verify persistence via GET
+    let response = app
+        .router
+        .oneshot(
+            Request::get("/v1/schemas/blog/1.0.0")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["schema"], updated_schema);
+}
+
+#[tokio::test]
+async fn update_schema_not_found_returns_404() {
+    let app = setup_test_app().await;
+
+    let update_body = serde_json::json!({"schema": {"type": "object"}});
+
+    let response = app
+        .router
+        .oneshot(
+            Request::put("/v1/schemas/nonexistent/1.0.0")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&update_body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["error"], "not_found");
+}
+
+// ---------------------------------------------------------------------------
+// Delete schema endpoints
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn delete_schema_returns_204() {
+    let app = setup_test_app().await;
+
+    // Create schema
+    let create_body = serde_json::json!({
+        "name": "product",
+        "version": "1.0.0",
+        "schema": {"type": "object"},
+    });
+
+    let response = app
+        .router
+        .clone()
+        .oneshot(
+            Request::post("/v1/schemas")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&create_body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CREATED);
+
+    // Delete schema
+    let response = app
+        .router
+        .clone()
+        .oneshot(
+            Request::delete("/v1/schemas/product/1.0.0")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
+    // Verify it's gone
+    let response = app
+        .router
+        .oneshot(
+            Request::get("/v1/schemas/product/1.0.0")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn delete_schema_not_found_returns_404() {
+    let app = setup_test_app().await;
+
+    let response = app
+        .router
+        .oneshot(
+            Request::delete("/v1/schemas/ghost/9.9.9")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["error"], "not_found");
+}
+
+#[tokio::test]
+async fn delete_latest_version_updates_registry() {
+    let app = setup_test_app().await;
+
+    let schema = serde_json::json!({"type": "object"});
+
+    // Create two versions
+    for version in &["1.0.0", "2.0.0"] {
+        let create_body = serde_json::json!({
+            "name": "article",
+            "version": version,
+            "schema": schema,
+        });
+
+        let response = app
+            .router
+            .clone()
+            .oneshot(
+                Request::post("/v1/schemas")
+                    .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&create_body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CREATED);
+    }
+
+    // Verify latest is 2.0.0
+    let response = app
+        .router
+        .clone()
+        .oneshot(
+            Request::get("/v1/schemas")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["schemas"][0]["latest_version"], "2.0.0");
+
+    // Delete latest (2.0.0)
+    let response = app
+        .router
+        .clone()
+        .oneshot(
+            Request::delete("/v1/schemas/article/2.0.0")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
+    // Verify registry now points to 1.0.0
+    let response = app
+        .router
+        .oneshot(
+            Request::get("/v1/schemas")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["schemas"][0]["latest_version"], "1.0.0");
+    assert_eq!(json["schemas"][0]["versions"], serde_json::json!(["1.0.0"]));
+}
+
+#[tokio::test]
+async fn delete_only_version_removes_from_list() {
+    let app = setup_test_app().await;
+
+    // Create schema
+    let create_body = serde_json::json!({
+        "name": "orphan",
+        "version": "1.0.0",
+        "schema": {"type": "object"},
+    });
+
+    let response = app
+        .router
+        .clone()
+        .oneshot(
+            Request::post("/v1/schemas")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&create_body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CREATED);
+
+    // Delete it
+    let response = app
+        .router
+        .clone()
+        .oneshot(
+            Request::delete("/v1/schemas/orphan/1.0.0")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
+    // Verify schemas list is empty
+    let response = app
+        .router
+        .oneshot(
+            Request::get("/v1/schemas")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["schemas"], serde_json::json!([]));
+}
+
+// ---------------------------------------------------------------------------
 // Cancel job endpoints
 // ---------------------------------------------------------------------------
 
