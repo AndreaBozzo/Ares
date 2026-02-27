@@ -74,12 +74,15 @@ impl From<ScrapeJob> for JobResponse {
 pub struct ListJobsQuery {
     pub status: Option<String>,
     pub limit: Option<usize>,
+    pub offset: Option<usize>,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct JobListResponse {
     pub jobs: Vec<JobResponse>,
     pub total: usize,
+    pub limit: usize,
+    pub offset: usize,
 }
 
 // ---------------------------------------------------------------------------
@@ -91,6 +94,7 @@ pub struct ExtractionHistoryQuery {
     pub url: String,
     pub schema_name: String,
     pub limit: Option<usize>,
+    pub offset: Option<usize>,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -124,6 +128,8 @@ impl From<Extraction> for ExtractionResponse {
 pub struct ExtractionHistoryResponse {
     pub extractions: Vec<ExtractionResponse>,
     pub total: usize,
+    pub limit: usize,
+    pub offset: usize,
 }
 
 // ---------------------------------------------------------------------------

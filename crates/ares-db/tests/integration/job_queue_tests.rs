@@ -213,14 +213,40 @@ async fn list_jobs_with_status_filter() {
     repo.create_job(test_request()).await.unwrap();
     repo.claim_job("worker-1").await.unwrap();
 
-    let pending = repo.list_jobs(Some(JobStatus::Pending), 10).await.unwrap();
+    let pending = repo
+        .list_jobs(Some(JobStatus::Pending), 10, 0)
+        .await
+        .unwrap();
     assert_eq!(pending.len(), 1);
 
-    let running = repo.list_jobs(Some(JobStatus::Running), 10).await.unwrap();
+    let running = repo
+        .list_jobs(Some(JobStatus::Running), 10, 0)
+        .await
+        .unwrap();
     assert_eq!(running.len(), 1);
 
-    let all = repo.list_jobs(None, 10).await.unwrap();
+    let all = repo.list_jobs(None, 10, 0).await.unwrap();
     assert_eq!(all.len(), 2);
+}
+
+#[tokio::test]
+async fn list_jobs_with_offset() {
+    let (pool, _container) = setup_test_db().await;
+    let repo = ScrapeJobRepository::new(pool);
+
+    for _ in 0..3 {
+        repo.create_job(test_request()).await.unwrap();
+    }
+
+    let page1 = repo.list_jobs(None, 2, 0).await.unwrap();
+    assert_eq!(page1.len(), 2);
+
+    let page2 = repo.list_jobs(None, 2, 2).await.unwrap();
+    assert_eq!(page2.len(), 1);
+
+    // Pages should not overlap
+    assert_ne!(page1[0].id, page2[0].id);
+    assert_ne!(page1[1].id, page2[0].id);
 }
 
 #[tokio::test]

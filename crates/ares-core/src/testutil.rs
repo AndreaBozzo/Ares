@@ -246,6 +246,7 @@ impl ExtractionStore for MockStore {
         _url: &str,
         _schema_name: &str,
         _limit: usize,
+        _offset: usize,
     ) -> Result<Vec<Extraction>, AppError> {
         Ok(vec![])
     }
@@ -408,15 +409,36 @@ impl JobQueue for MockJobQueue {
         &self,
         status: Option<JobStatus>,
         limit: usize,
+        offset: usize,
     ) -> Result<Vec<ScrapeJob>, AppError> {
         let jobs = self.jobs.lock().unwrap();
         let filtered: Vec<_> = jobs
             .iter()
             .filter(|j| status.is_none_or(|s| j.status == s))
+            .skip(offset)
             .take(limit)
             .cloned()
             .collect();
         Ok(filtered)
+    }
+
+    async fn retry_job(&self, job_id: Uuid) -> Result<Option<ScrapeJob>, AppError> {
+        let mut jobs = self.jobs.lock().unwrap();
+        if let Some(job) = jobs.iter_mut().find(|j| j.id == job_id) {
+            if matches!(job.status, JobStatus::Failed | JobStatus::Cancelled) {
+                job.status = JobStatus::Pending;
+                job.retry_count = 0;
+                job.error_message = None;
+                job.worker_id = None;
+                job.started_at = None;
+                job.completed_at = None;
+                job.extraction_id = None;
+                job.next_retry_at = None;
+                job.updated_at = Utc::now();
+                return Ok(Some(job.clone()));
+            }
+        }
+        Ok(None)
     }
 
     async fn release_job(&self, job_id: Uuid) -> Result<(), AppError> {

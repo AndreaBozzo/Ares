@@ -456,3 +456,175 @@ async fn get_extractions_empty() {
     assert_eq!(json["total"], 0);
     assert_eq!(json["extractions"].as_array().unwrap().len(), 0);
 }
+
+// ---------------------------------------------------------------------------
+// Retry job endpoint
+// ---------------------------------------------------------------------------
+
+/// Helper: create a job and return its ID.
+async fn create_test_job(app: &crate::integration::common::TestApp) -> String {
+    let create_body = serde_json::json!({
+        "url": "https://example.com",
+        "schema_name": "test",
+        "schema": {"type": "object"},
+        "model": "gpt-4o-mini",
+        "base_url": "https://api.openai.com/v1"
+    });
+
+    let response = app
+        .router
+        .clone()
+        .oneshot(
+            Request::post("/v1/jobs")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&create_body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::ACCEPTED);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    json["job_id"].as_str().unwrap().to_string()
+}
+
+#[tokio::test]
+async fn retry_cancelled_job() {
+    let app = setup_test_app().await;
+    let job_id = create_test_job(&app).await;
+
+    // Cancel the job
+    let response = app
+        .router
+        .clone()
+        .oneshot(
+            Request::delete(format!("/v1/jobs/{job_id}"))
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
+    // Retry it
+    let response = app
+        .router
+        .clone()
+        .oneshot(
+            Request::post(format!("/v1/jobs/{job_id}/retry"))
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["id"], job_id);
+    assert_eq!(json["status"], "pending");
+    assert_eq!(json["retry_count"], 0);
+    assert!(json["error_message"].is_null());
+}
+
+#[tokio::test]
+async fn retry_pending_job_returns_409() {
+    let app = setup_test_app().await;
+    let job_id = create_test_job(&app).await;
+
+    // Try to retry a pending job — should fail
+    let response = app
+        .router
+        .oneshot(
+            Request::post(format!("/v1/jobs/{job_id}/retry"))
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["error"], "conflict");
+}
+
+#[tokio::test]
+async fn retry_nonexistent_job_returns_404() {
+    let app = setup_test_app().await;
+
+    let fake_id = uuid::Uuid::new_v4();
+    let response = app
+        .router
+        .oneshot(
+            Request::post(format!("/v1/jobs/{fake_id}/retry"))
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+// ---------------------------------------------------------------------------
+// Pagination
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn list_jobs_with_pagination() {
+    let app = setup_test_app().await;
+
+    // Create 3 jobs
+    for _ in 0..3 {
+        create_test_job(&app).await;
+    }
+
+    // First page: limit=2, offset=0
+    let response = app
+        .router
+        .clone()
+        .oneshot(
+            Request::get("/v1/jobs?limit=2&offset=0")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["total"], 3);
+    assert_eq!(json["limit"], 2);
+    assert_eq!(json["offset"], 0);
+    assert_eq!(json["jobs"].as_array().unwrap().len(), 2);
+
+    // Second page: limit=2, offset=2
+    let response = app
+        .router
+        .clone()
+        .oneshot(
+            Request::get("/v1/jobs?limit=2&offset=2")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["total"], 3);
+    assert_eq!(json["limit"], 2);
+    assert_eq!(json["offset"], 2);
+    assert_eq!(json["jobs"].as_array().unwrap().len(), 1);
+}

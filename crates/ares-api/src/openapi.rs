@@ -13,6 +13,7 @@ use utoipa::OpenApi;
         crate::routes::list_jobs,
         crate::routes::get_job,
         crate::routes::cancel_job,
+        crate::routes::retry_job,
         crate::routes::get_extractions,
         crate::routes::list_schemas,
         crate::routes::get_schema,
