@@ -34,70 +34,77 @@ flowchart TB
   User((User / Cron))
   Admin((API Consumer))
   Web[("Target Websites")]
-  LLM_API[("LLM API (OpenAI/Gemini)")]
-    
+  LLM_API[("LLM API\n(OpenAI / Gemini)")]
+
   %% Entrypoints
   subgraph Interfaces["Interfaces"]
-    CLI["ares-cli\n(Command Line Interface)"]
-    API["ares-api\n(REST API / Axum / Swagger UI)"]
+    CLI["ares-cli\n(Command Line)"]
+    API["ares-api\n(REST / Axum / Swagger)"]
   end
 
   %% Core Business Logic
   subgraph Core["ares-core (Business Logic)"]
-    Traits{{"Traits\n(Fetcher, Extractor, JobQueue)"}}
-    ScrapeSvc["ScrapeService\n(One-shot scraping)"]
-    WorkerSvc["WorkerService\n(Background polling)"]
-    CB["CircuitBreaker & Throttle"]
-        
-    ScrapeSvc --> Traits
-    WorkerSvc --> Traits
-    WorkerSvc --> CB
+    Traits{{"Traits\n(Fetcher · Cleaner · Extractor\nExtractorFactory · ExtractionStore · JobQueue)"}}
+    Schema["SchemaResolver\n(CRUD · name@version · registry)"]
+    ScrapeSvc["ScrapeService\n(Fetcher → Cleaner → Extractor → Store)"]
+    WorkerSvc["WorkerService\n(Poll queue · retry · shutdown)"]
+    CB["CircuitBreaker"]
+    Throttle["ThrottledFetcher\n(Per-domain rate limit)"]
+    NullStore["NullStore\n(No-op persistence)"]
+
+    WorkerSvc -->|Creates per job| ScrapeSvc
+    WorkerSvc -->|Guards scrape calls| CB
   end
 
   %% External Adapters
   subgraph Client["ares-client (External Adapters)"]
     Reqwest["ReqwestFetcher\n(Static HTML)"]
     Browser["BrowserFetcher\n(Chromium SPA)"]
-    Cleaner["HTMD Cleaner\n(HTML to Markdown)"]
-    Extractor["LLM Client\n(JSON Schema Extraction)"]
+    Cleaner["HtmdCleaner\n(HTML → Markdown)"]
+    LlmClient["OpenAiExtractor\n(JSON Schema extraction)"]
+    Factory["OpenAiExtractorFactory\n(Creates extractors per job)"]
   end
 
   %% Database
   subgraph Database["ares-db (Persistence)"]
     DB[(PostgreSQL)]
-    JobRepo["JobRepository"]
-    ExtRepo["ExtractionRepository"]
-        
+    JobRepo["ScrapeJobRepository\n(implements JobQueue)"]
+    ExtRepo["ExtractionRepository\n(implements ExtractionStore)"]
+
     JobRepo --> DB
     ExtRepo --> DB
   end
 
-  %% Relationships and Data Flow
+  %% User → Interface
   User -->|Executes| CLI
-  Admin -->|HTTP Requests| API
-    
-  CLI -->|Delegates| ScrapeSvc
-  CLI -->|Manages| WorkerSvc
-  API -->|Delegates| ScrapeSvc
-  API -->|Manages| WorkerSvc
-    
+  Admin -->|HTTP| API
+
+  %% CLI wiring
+  CLI -->|One-shot scrape| ScrapeSvc
+  CLI -->|Start worker| WorkerSvc
+  CLI -->|Resolve schemas| Schema
+
+  %% API wiring (no WorkerService — worker is a separate process)
+  API -->|One-shot scrape| ScrapeSvc
+  API -->|Manage jobs| JobRepo
+  API -->|Schema CRUD| Schema
+
+  %% Trait implementations (dashed = "implements")
   Traits -.->|Implemented by| Client
   Traits -.->|Implemented by| Database
-    
-  %% Client interactions
-  Reqwest -->|Fetches| Web
-  Browser -->|Renders| Web
-  Reqwest --> Cleaner
-  Browser --> Cleaner
-  Cleaner --> Extractor
-  Extractor -->|Extracts Structured Data| LLM_API
+  NullStore -.->|Implements ExtractionStore| Traits
+
+  %% External interactions
+  Reqwest -->|HTTP fetch| Web
+  Browser -->|Headless render| Web
+  LlmClient -->|Structured extraction| LLM_API
 ```
 
 ```
 ares-cli          CLI interface — arg parsing, wiring, delegation
 ares-api          REST API — Axum HTTP server, OpenAPI/Swagger UI, Bearer auth
-ares-core         Business logic — ScrapeService, WorkerService, CircuitBreaker, Throttle, traits
-ares-client       External adapters — HTTP fetcher, headless browser fetcher, HTML cleaner, LLM client
+ares-core         Business logic — ScrapeService, WorkerService, CircuitBreaker, SchemaResolver, traits
+ares-client       External adapters — ReqwestFetcher, BrowserFetcher, HtmdCleaner, OpenAiExtractor
 ares-db           PostgreSQL persistence — ExtractionRepository, ScrapeJobRepository, migrations
 ```
 
