@@ -28,7 +28,70 @@ Conceptual sibling of [Ceres](https://github.com/AndreaBozzo/Ceres) — same phi
 
 ## Architecture
 
-![Architecture diagram](docs/assets/aresarchitecture.png)
+```mermaid
+flowchart TB
+  %% External Entities
+  User((User / Cron))
+  Admin((API Consumer))
+  Web[("Target Websites")]
+  LLM_API[("LLM API (OpenAI/Gemini)")]
+    
+  %% Entrypoints
+  subgraph Interfaces [Interfaces]
+    CLI["ares-cli\n(Command Line Interface)"]
+    API["ares-api\n(REST API / Axum / Swagger UI)"]
+  end
+
+  %% Core Business Logic
+  subgraph Core [ares-core (Business Logic)]
+    Traits{{"Traits\n(Fetcher, Extractor, JobQueue)"}}
+    ScrapeSvc["ScrapeService\n(One-shot scraping)"]
+    WorkerSvc["WorkerService\n(Background polling)"]
+    CB["CircuitBreaker & Throttle"]
+        
+    ScrapeSvc --> Traits
+    WorkerSvc --> Traits
+    WorkerSvc --> CB
+  end
+
+  %% External Adapters
+  subgraph Client [ares-client (External Adapters)]
+    Reqwest["ReqwestFetcher\n(Static HTML)"]
+    Browser["BrowserFetcher\n(Chromium SPA)"]
+    Cleaner["HTMD Cleaner\n(HTML to Markdown)"]
+    Extractor["LLM Client\n(JSON Schema Extraction)"]
+  end
+
+  %% Database
+  subgraph Database [ares-db (Persistence)]
+    DB[(PostgreSQL)]
+    JobRepo["JobRepository"]
+    ExtRepo["ExtractionRepository"]
+        
+    JobRepo --> DB
+    ExtRepo --> DB
+  end
+
+  %% Relationships and Data Flow
+  User -->|Executes| CLI
+  Admin -->|HTTP Requests| API
+    
+  CLI -->|Delegates| ScrapeSvc
+  CLI -->|Manages| WorkerSvc
+  API -->|Delegates| ScrapeSvc
+  API -->|Manages| WorkerSvc
+    
+  Traits -.->|Implemented by| Client
+  Traits -.->|Implemented by| Database
+    
+  %% Client interactions
+  Reqwest -->|Fetches| Web
+  Browser -->|Renders| Web
+  Reqwest --> Cleaner
+  Browser --> Cleaner
+  Cleaner --> Extractor
+  Extractor -->|Extracts Structured Data| LLM_API
+```
 
 ```
 ares-cli          CLI interface — arg parsing, wiring, delegation
