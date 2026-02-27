@@ -5,7 +5,7 @@ use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::middleware;
 use axum::response::IntoResponse;
-use axum::routing::{delete, get, post};
+use axum::routing::{delete, get, post, put};
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 use uuid::Uuid;
@@ -20,7 +20,7 @@ use crate::dto::{
     CreateJobRequest, CreateJobResponse, CreateSchemaRequest, CreateSchemaResponse,
     ExtractionHistoryQuery, ExtractionHistoryResponse, ExtractionResponse, HealthResponse,
     JobListResponse, JobResponse, ListJobsQuery, SchemaDetailResponse, SchemaEntryResponse,
-    SchemaListResponse, ScrapeRequest, ScrapeResponse,
+    SchemaListResponse, ScrapeRequest, ScrapeResponse, UpdateSchemaRequest,
 };
 use crate::error::ApiError;
 use crate::openapi::ApiDoc;
@@ -39,6 +39,11 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/schemas", get(list_schemas))
         .route("/v1/schemas", post(create_schema))
         .route("/v1/schemas/{name}/{version}", get(get_schema))
+        .route("/v1/schemas/{name}/{version}", put(update_schema_version))
+        .route(
+            "/v1/schemas/{name}/{version}",
+            delete(delete_schema_version),
+        )
         .layer(middleware::from_fn_with_state(
             state.clone(),
             require_api_key,
@@ -465,6 +470,85 @@ pub async fn create_schema(
     };
 
     Ok((StatusCode::CREATED, axum::Json(response)))
+}
+
+#[utoipa::path(
+    put,
+    path = "/v1/schemas/{name}/{version}",
+    params(
+        ("name" = String, Path, description = "Schema name"),
+        ("version" = String, Path, description = "Schema version"),
+    ),
+    request_body = UpdateSchemaRequest,
+    responses(
+        (status = 200, description = "Schema updated", body = SchemaDetailResponse),
+        (status = 404, description = "Not found", body = crate::dto::ErrorResponse),
+        (status = 400, description = "Bad request", body = crate::dto::ErrorResponse),
+        (status = 401, description = "Unauthorized"),
+    ),
+    security(("bearer" = [])),
+    tag = "schemas"
+)]
+pub async fn update_schema_version(
+    State(state): State<Arc<AppState>>,
+    Path((name, version)): Path<(String, String)>,
+    axum::Json(body): axum::Json<UpdateSchemaRequest>,
+) -> Result<impl IntoResponse, ApiError> {
+    let resolver = SchemaResolver::new(&state.schemas_dir);
+
+    match resolver.update_schema(&name, &version, &body.schema) {
+        Ok(()) => {
+            let response = SchemaDetailResponse {
+                name,
+                version,
+                schema: body.schema,
+            };
+            Ok(axum::Json(response).into_response())
+        }
+        Err(ares_core::AppError::SchemaError(msg)) if msg.contains("not found") => {
+            let body = crate::dto::ErrorResponse {
+                error: "not_found".to_string(),
+                message: format!("Schema not found: {name}@{version}"),
+            };
+            Ok((StatusCode::NOT_FOUND, axum::Json(body)).into_response())
+        }
+        Err(e) => Err(ApiError::from(e)),
+    }
+}
+
+#[utoipa::path(
+    delete,
+    path = "/v1/schemas/{name}/{version}",
+    params(
+        ("name" = String, Path, description = "Schema name"),
+        ("version" = String, Path, description = "Schema version"),
+    ),
+    responses(
+        (status = 204, description = "Schema deleted"),
+        (status = 404, description = "Not found", body = crate::dto::ErrorResponse),
+        (status = 401, description = "Unauthorized"),
+    ),
+    security(("bearer" = [])),
+    tag = "schemas"
+)]
+pub async fn delete_schema_version(
+    State(state): State<Arc<AppState>>,
+    Path((name, version)): Path<(String, String)>,
+) -> Result<impl IntoResponse, ApiError> {
+    let resolver = SchemaResolver::new(&state.schemas_dir);
+    let schema_ref = format!("{name}@{version}");
+
+    match resolver.delete_schema(&name, &version) {
+        Ok(()) => Ok(StatusCode::NO_CONTENT.into_response()),
+        Err(ares_core::AppError::SchemaError(msg)) if msg.contains("not found") => {
+            let body = crate::dto::ErrorResponse {
+                error: "not_found".to_string(),
+                message: format!("Schema not found: {schema_ref}"),
+            };
+            Ok((StatusCode::NOT_FOUND, axum::Json(body)).into_response())
+        }
+        Err(e) => Err(ApiError::from(e)),
+    }
 }
 
 // ---------------------------------------------------------------------------

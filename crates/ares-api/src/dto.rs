@@ -195,6 +195,12 @@ pub struct SchemaDetailResponse {
 }
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct UpdateSchemaRequest {
+    /// Replacement JSON Schema definition
+    pub schema: serde_json::Value,
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct CreateSchemaRequest {
     /// Schema name (e.g., "blog")
     pub name: String,

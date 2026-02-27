@@ -18,6 +18,8 @@ use utoipa::OpenApi;
         crate::routes::list_schemas,
         crate::routes::get_schema,
         crate::routes::create_schema,
+        crate::routes::update_schema_version,
+        crate::routes::delete_schema_version,
         crate::routes::health,
     ),
     components(schemas(
@@ -34,6 +36,7 @@ use utoipa::OpenApi;
         crate::dto::SchemaDetailResponse,
         crate::dto::CreateSchemaRequest,
         crate::dto::CreateSchemaResponse,
+        crate::dto::UpdateSchemaRequest,
         crate::dto::HealthResponse,
         crate::dto::ErrorResponse,
     )),

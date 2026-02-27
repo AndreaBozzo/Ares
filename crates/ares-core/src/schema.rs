@@ -190,6 +190,94 @@ impl SchemaResolver {
         Ok(versions)
     }
 
+    /// Update the content of an existing schema version.
+    ///
+    /// Returns an error if the schema does not exist.
+    /// Does not modify the registry — only the file content changes.
+    pub fn update_schema(
+        &self,
+        name: &str,
+        version: &str,
+        schema: &serde_json::Value,
+    ) -> Result<(), AppError> {
+        if name.is_empty() || version.is_empty() {
+            return Err(AppError::SchemaError(
+                "Schema name and version must not be empty".to_string(),
+            ));
+        }
+
+        let schema_path = self.schemas_dir.join(name).join(format!("{version}.json"));
+        if !schema_path.exists() {
+            return Err(AppError::SchemaError(format!(
+                "Schema not found: {name}@{version}"
+            )));
+        }
+
+        let pretty = serde_json::to_string_pretty(schema)
+            .map_err(|e| AppError::SchemaError(e.to_string()))?;
+        std::fs::write(&schema_path, pretty).map_err(|e| {
+            AppError::SchemaError(format!(
+                "Failed to write schema file {}: {e}",
+                schema_path.display()
+            ))
+        })?;
+
+        Ok(())
+    }
+
+    /// Delete a specific schema version file and update the registry.
+    ///
+    /// If the deleted version was the latest, the registry is updated to point
+    /// to the next most recent version. If it was the only version, the entry
+    /// is removed from the registry entirely.
+    pub fn delete_schema(&self, name: &str, version: &str) -> Result<(), AppError> {
+        if name.is_empty() || version.is_empty() {
+            return Err(AppError::SchemaError(
+                "Schema name and version must not be empty".to_string(),
+            ));
+        }
+
+        let schema_path = self.schemas_dir.join(name).join(format!("{version}.json"));
+        if !schema_path.exists() {
+            return Err(AppError::SchemaError(format!(
+                "Schema not found: {name}@{version}"
+            )));
+        }
+
+        std::fs::remove_file(&schema_path).map_err(|e| {
+            AppError::SchemaError(format!(
+                "Failed to delete schema file {}: {e}",
+                schema_path.display()
+            ))
+        })?;
+
+        // Update the registry
+        let mut registry = self.load_registry()?;
+        let remaining = self.list_versions(name)?;
+
+        if remaining.is_empty() {
+            registry.remove(name);
+        } else if registry.get(name).is_some_and(|latest| latest == version) {
+            // Deleted version was the latest — point to the highest remaining
+            registry.insert(name.to_string(), remaining.last().unwrap().clone());
+        }
+
+        let registry_path = self.schemas_dir.join("registry.json");
+        let registry_json = serde_json::to_string_pretty(&registry)
+            .map_err(|e| AppError::SchemaError(e.to_string()))?;
+        std::fs::write(&registry_path, format!("{registry_json}\n")).map_err(|e| {
+            AppError::SchemaError(format!(
+                "Failed to write schema registry {}: {e}",
+                registry_path.display()
+            ))
+        })?;
+
+        // Clean up empty directory (non-fatal)
+        let _ = std::fs::remove_dir(self.schemas_dir.join(name));
+
+        Ok(())
+    }
+
     /// Create a new schema version, writing the file and updating the registry.
     pub fn create_schema(
         &self,
@@ -508,5 +596,160 @@ mod tests {
         assert_eq!(entries[0].latest_version, "2.0.0");
         // Versions should be sorted
         assert_eq!(entries[0].versions, vec!["1.0.0", "1.1.0", "2.0.0"]);
+    }
+
+    #[test]
+    fn test_update_schema_overwrites_content() {
+        let tmp = TempDir::new().unwrap();
+        let schemas_dir = tmp.path().join("schemas");
+        std::fs::create_dir_all(&schemas_dir).unwrap();
+
+        let resolver = SchemaResolver::new(&schemas_dir);
+        let original = serde_json::json!({"type": "object"});
+        resolver.create_schema("blog", "1.0.0", &original).unwrap();
+
+        let updated =
+            serde_json::json!({"type": "object", "properties": {"title": {"type": "string"}}});
+        resolver.update_schema("blog", "1.0.0", &updated).unwrap();
+
+        let resolved = resolver.resolve("blog@1.0.0").unwrap();
+        assert_eq!(resolved.schema, updated);
+    }
+
+    #[test]
+    fn test_update_schema_not_found() {
+        let tmp = TempDir::new().unwrap();
+        let schemas_dir = tmp.path().join("schemas");
+        std::fs::create_dir_all(&schemas_dir).unwrap();
+
+        let resolver = SchemaResolver::new(&schemas_dir);
+        let err = resolver
+            .update_schema("missing", "1.0.0", &serde_json::json!({}))
+            .unwrap_err();
+
+        assert!(matches!(err, AppError::SchemaError(_)));
+        assert!(err.to_string().contains("not found"));
+    }
+
+    #[test]
+    fn test_update_schema_empty_name_errors() {
+        let tmp = TempDir::new().unwrap();
+        let resolver = SchemaResolver::new(tmp.path());
+        let schema = serde_json::json!({"type": "object"});
+
+        let err = resolver.update_schema("", "1.0.0", &schema).unwrap_err();
+        assert!(matches!(err, AppError::SchemaError(_)));
+
+        let err = resolver.update_schema("blog", "", &schema).unwrap_err();
+        assert!(matches!(err, AppError::SchemaError(_)));
+    }
+
+    #[test]
+    fn test_update_schema_does_not_change_registry() {
+        let tmp = TempDir::new().unwrap();
+        let schemas_dir = tmp.path().join("schemas");
+        std::fs::create_dir_all(&schemas_dir).unwrap();
+
+        let resolver = SchemaResolver::new(&schemas_dir);
+        let schema = serde_json::json!({"type": "object"});
+
+        resolver.create_schema("blog", "1.0.0", &schema).unwrap();
+        resolver.create_schema("blog", "2.0.0", &schema).unwrap();
+
+        // Update v1.0.0 — registry should still point to 2.0.0
+        let updated = serde_json::json!({"type": "array"});
+        resolver.update_schema("blog", "1.0.0", &updated).unwrap();
+
+        let registry = resolver.load_registry().unwrap();
+        assert_eq!(registry.get("blog").unwrap(), "2.0.0");
+    }
+
+    #[test]
+    fn test_delete_schema_removes_file() {
+        let tmp = TempDir::new().unwrap();
+        let schemas_dir = tmp.path().join("schemas");
+        std::fs::create_dir_all(&schemas_dir).unwrap();
+
+        let resolver = SchemaResolver::new(&schemas_dir);
+        let schema = serde_json::json!({"type": "object"});
+
+        resolver.create_schema("blog", "1.0.0", &schema).unwrap();
+        resolver.create_schema("blog", "2.0.0", &schema).unwrap();
+
+        resolver.delete_schema("blog", "1.0.0").unwrap();
+
+        let file_path = schemas_dir.join("blog/1.0.0.json");
+        assert!(!file_path.exists());
+        // Other version should still exist
+        assert!(schemas_dir.join("blog/2.0.0.json").exists());
+    }
+
+    #[test]
+    fn test_delete_schema_not_found() {
+        let tmp = TempDir::new().unwrap();
+        let schemas_dir = tmp.path().join("schemas");
+        std::fs::create_dir_all(&schemas_dir).unwrap();
+
+        let resolver = SchemaResolver::new(&schemas_dir);
+        let err = resolver.delete_schema("ghost", "9.9.9").unwrap_err();
+
+        assert!(matches!(err, AppError::SchemaError(_)));
+        assert!(err.to_string().contains("not found"));
+    }
+
+    #[test]
+    fn test_delete_latest_updates_registry_to_next() {
+        let tmp = TempDir::new().unwrap();
+        let schemas_dir = tmp.path().join("schemas");
+        std::fs::create_dir_all(&schemas_dir).unwrap();
+
+        let resolver = SchemaResolver::new(&schemas_dir);
+        let schema = serde_json::json!({"type": "object"});
+
+        resolver.create_schema("blog", "1.0.0", &schema).unwrap();
+        resolver.create_schema("blog", "2.0.0", &schema).unwrap();
+
+        // Delete latest (2.0.0) — registry should fall back to 1.0.0
+        resolver.delete_schema("blog", "2.0.0").unwrap();
+
+        let registry = resolver.load_registry().unwrap();
+        assert_eq!(registry.get("blog").unwrap(), "1.0.0");
+    }
+
+    #[test]
+    fn test_delete_non_latest_leaves_registry_unchanged() {
+        let tmp = TempDir::new().unwrap();
+        let schemas_dir = tmp.path().join("schemas");
+        std::fs::create_dir_all(&schemas_dir).unwrap();
+
+        let resolver = SchemaResolver::new(&schemas_dir);
+        let schema = serde_json::json!({"type": "object"});
+
+        resolver.create_schema("blog", "1.0.0", &schema).unwrap();
+        resolver.create_schema("blog", "2.0.0", &schema).unwrap();
+
+        // Delete non-latest (1.0.0) — registry should still point to 2.0.0
+        resolver.delete_schema("blog", "1.0.0").unwrap();
+
+        let registry = resolver.load_registry().unwrap();
+        assert_eq!(registry.get("blog").unwrap(), "2.0.0");
+    }
+
+    #[test]
+    fn test_delete_only_version_removes_registry_entry() {
+        let tmp = TempDir::new().unwrap();
+        let schemas_dir = tmp.path().join("schemas");
+        std::fs::create_dir_all(&schemas_dir).unwrap();
+
+        let resolver = SchemaResolver::new(&schemas_dir);
+        let schema = serde_json::json!({"type": "object"});
+
+        resolver.create_schema("blog", "1.0.0", &schema).unwrap();
+        resolver.delete_schema("blog", "1.0.0").unwrap();
+
+        let registry = resolver.load_registry().unwrap();
+        assert!(!registry.contains_key("blog"));
+        // Directory should be cleaned up
+        assert!(!schemas_dir.join("blog").exists());
     }
 }
