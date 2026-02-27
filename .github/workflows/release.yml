@@ -15,6 +15,7 @@ env:
 
 permissions:
   contents: read
+  packages: write
 
 jobs:
   validate:
@@ -164,6 +165,36 @@ jobs:
 
       - name: Security audit
         uses: EmbarkStudios/cargo-deny-action@v2
+
+  docker:
+    name: Publish Docker Image
+    needs: [validate, test]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Compute lowercase registry owner
+        id: owner
+        run: echo "value=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ghcr.io/${{ steps.owner.outputs.value }}/ares-api:${{ needs.validate.outputs.version }}
+            ghcr.io/${{ steps.owner.outputs.value }}/ares-api:latest
 
   dry-run:
     name: Publish Dry Run
