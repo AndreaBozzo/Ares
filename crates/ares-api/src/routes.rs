@@ -13,7 +13,7 @@ use uuid::Uuid;
 use ares_client::{HtmdCleaner, OpenAiExtractor, ReqwestFetcher};
 use ares_core::job::CreateScrapeJobRequest;
 use ares_core::job_queue::JobQueue;
-use ares_core::{NullStore, SchemaResolver, ScrapeService};
+use ares_core::{NullStore, SchemaResolver, ScrapeService, ThrottleConfig, ThrottledFetcher};
 
 use crate::auth::require_api_key;
 use crate::dto::{
@@ -98,18 +98,40 @@ pub async fn scrape(
     let cleaner = HtmdCleaner::new();
     let extractor = OpenAiExtractor::with_base_url(&api_key, &model, &base_url)?;
 
-    // Run the scrape pipeline
-    let result = if save {
-        let repo = state.db.extraction_repo();
-        let service = ScrapeService::with_store(fetcher, cleaner, extractor, repo, model);
-        service
-            .scrape(&body.url, &body.schema, &body.schema_name)
-            .await?
-    } else {
-        let service = ScrapeService::with_store(fetcher, cleaner, extractor, NullStore, model);
-        service
-            .scrape(&body.url, &body.schema, &body.schema_name)
-            .await?
+    // Run the scrape pipeline, optionally with per-domain throttling
+    let result = match body.throttle_ms {
+        Some(ms) if ms > 0 => {
+            let config = ThrottleConfig::new(std::time::Duration::from_millis(ms));
+            let fetcher = ThrottledFetcher::new(fetcher, config);
+            if save {
+                let repo = state.db.extraction_repo();
+                let service = ScrapeService::with_store(fetcher, cleaner, extractor, repo, model);
+                service
+                    .scrape(&body.url, &body.schema, &body.schema_name)
+                    .await?
+            } else {
+                let service =
+                    ScrapeService::with_store(fetcher, cleaner, extractor, NullStore, model);
+                service
+                    .scrape(&body.url, &body.schema, &body.schema_name)
+                    .await?
+            }
+        }
+        _ => {
+            if save {
+                let repo = state.db.extraction_repo();
+                let service = ScrapeService::with_store(fetcher, cleaner, extractor, repo, model);
+                service
+                    .scrape(&body.url, &body.schema, &body.schema_name)
+                    .await?
+            } else {
+                let service =
+                    ScrapeService::with_store(fetcher, cleaner, extractor, NullStore, model);
+                service
+                    .scrape(&body.url, &body.schema, &body.schema_name)
+                    .await?
+            }
+        }
     };
 
     let response = ScrapeResponse {

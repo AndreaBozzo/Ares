@@ -160,6 +160,8 @@ pub struct ScrapeRequest {
     pub base_url: Option<String>,
     /// Persist result to database (default: true)
     pub save: Option<bool>,
+    /// Per-domain throttle delay in milliseconds (omit or 0 to disable)
+    pub throttle_ms: Option<u64>,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
