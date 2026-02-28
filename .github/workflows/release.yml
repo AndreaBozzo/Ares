@@ -247,11 +247,18 @@ jobs:
 
             while [ $retry -lt $max_retries ]; do
               echo "Publishing $crate (attempt $((retry + 1))/$max_retries)..."
-              if cargo publish -p "$crate" 2>&1; then
+              output=$(cargo publish -p "$crate" 2>&1) && {
                 echo "$crate published successfully"
+                return 0
+              }
+
+              # Treat "already uploaded" as success (idempotent re-run)
+              if echo "$output" | grep -q "already uploaded"; then
+                echo "$crate already published, skipping"
                 return 0
               fi
 
+              echo "$output"
               retry=$((retry + 1))
               if [ $retry -lt $max_retries ]; then
                 echo "Retrying in 60 seconds..."

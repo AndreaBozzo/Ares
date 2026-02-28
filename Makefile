@@ -52,7 +52,7 @@ migrate: ## Run database migrations
 	@echo "Initializing migration tracking..."
 	@psql $$DATABASE_URL -v ON_ERROR_STOP=1 -c "CREATE TABLE IF NOT EXISTS schema_migrations (filename text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now());" > /dev/null
 	@echo "Checking for pending migrations..."
-	@for f in migrations/*.sql; do \
+	@for f in crates/ares-db/migrations/*.sql; do \
 		[ -f "$$f" ] || continue; \
 		filename=$$(basename "$$f"); \
 		escaped_filename=$$(printf '%s' "$$filename" | sed "s/'/''/g"); \
