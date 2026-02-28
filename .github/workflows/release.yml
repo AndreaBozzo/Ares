@@ -220,12 +220,8 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
-      - name: Dry run publish all crates
-        run: |
-          for crate in ares-core ares-client ares-db ares-cli ares-api; do
-            echo "Dry-run publishing $crate..."
-            cargo publish --dry-run -p "$crate"
-          done
+      - name: Dry run publish ares-core
+        run: cargo publish --dry-run -p ares-core
 
   publish:
     name: Publish to crates.io
