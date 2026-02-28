@@ -12,7 +12,7 @@ use ares_core::job::{CreateScrapeJobRequest, JobStatus, WorkerConfig};
 use ares_core::job_queue::JobQueue;
 use ares_core::traits::Fetcher;
 use ares_core::worker::{TracingWorkerReporter, WorkerService};
-use ares_core::{NullStore, SchemaResolver, ScrapeService};
+use ares_core::{NullStore, SchemaResolver, ScrapeService, ThrottleConfig, ThrottledFetcher};
 use ares_db::{Database, DatabaseConfig, ExtractionRepository};
 
 // TODO(#2): Extract shared wiring to ares-api for HTTP API
@@ -79,6 +79,10 @@ enum Commands {
         /// Skip saving when extracted data hasn't changed (requires --save)
         #[arg(long, default_value_t = false)]
         skip_unchanged: bool,
+
+        /// Per-domain throttle delay in milliseconds (e.g., 1000 for 1s between requests)
+        #[arg(long)]
+        throttle: Option<u64>,
     },
 
     /// Show extraction history for a URL
@@ -135,6 +139,10 @@ enum Commands {
         /// Skip saving when extracted data hasn't changed
         #[arg(long, default_value_t = false)]
         skip_unchanged: bool,
+
+        /// Per-domain throttle delay in milliseconds (e.g., 1000 for 1s between requests)
+        #[arg(long)]
+        throttle: Option<u64>,
     },
 }
 
@@ -220,6 +228,7 @@ async fn main() -> Result<()> {
             llm_timeout,
             system_prompt,
             skip_unchanged,
+            throttle,
         } => {
             let resolved = SchemaResolver::new("schemas").resolve(&schema)?;
             let schema_name = schema_name.unwrap_or(resolved.name);
@@ -241,7 +250,15 @@ async fn main() -> Result<()> {
 
             if browser {
                 let fetcher = create_browser_fetcher(opts.fetch_timeout).await?;
-                cmd_scrape(fetcher, opts).await?;
+                if let Some(ms) = throttle.filter(|&ms| ms > 0) {
+                    let fetcher = ThrottledFetcher::new(
+                        fetcher,
+                        ThrottleConfig::new(Duration::from_millis(ms)),
+                    );
+                    cmd_scrape(fetcher, opts).await?;
+                } else {
+                    cmd_scrape(fetcher, opts).await?;
+                }
             } else {
                 let fetcher = match opts.fetch_timeout {
                     Some(t) => ReqwestFetcher::with_timeout(t),
@@ -249,7 +266,15 @@ async fn main() -> Result<()> {
                 }
                 .context("Failed to create HTTP client")?
                 .allow_private_urls();
-                cmd_scrape(fetcher, opts).await?;
+                if let Some(ms) = throttle.filter(|&ms| ms > 0) {
+                    let fetcher = ThrottledFetcher::new(
+                        fetcher,
+                        ThrottleConfig::new(Duration::from_millis(ms)),
+                    );
+                    cmd_scrape(fetcher, opts).await?;
+                } else {
+                    cmd_scrape(fetcher, opts).await?;
+                }
             }
         }
 
@@ -383,6 +408,7 @@ async fn main() -> Result<()> {
             llm_timeout,
             system_prompt,
             skip_unchanged,
+            throttle,
         } => {
             let worker_opts = WorkerOpts {
                 api_key: &api_key,
@@ -396,7 +422,15 @@ async fn main() -> Result<()> {
 
             if browser {
                 let fetcher = create_browser_fetcher(worker_opts.fetch_timeout).await?;
-                cmd_worker(fetcher, worker_opts).await?;
+                if let Some(ms) = throttle.filter(|&ms| ms > 0) {
+                    let fetcher = ThrottledFetcher::new(
+                        fetcher,
+                        ThrottleConfig::new(Duration::from_millis(ms)),
+                    );
+                    cmd_worker(fetcher, worker_opts).await?;
+                } else {
+                    cmd_worker(fetcher, worker_opts).await?;
+                }
             } else {
                 let fetcher = match worker_opts.fetch_timeout {
                     Some(t) => ReqwestFetcher::with_timeout(t),
@@ -404,7 +438,15 @@ async fn main() -> Result<()> {
                 }
                 .context("Failed to create HTTP client")?
                 .allow_private_urls();
-                cmd_worker(fetcher, worker_opts).await?;
+                if let Some(ms) = throttle.filter(|&ms| ms > 0) {
+                    let fetcher = ThrottledFetcher::new(
+                        fetcher,
+                        ThrottleConfig::new(Duration::from_millis(ms)),
+                    );
+                    cmd_worker(fetcher, worker_opts).await?;
+                } else {
+                    cmd_worker(fetcher, worker_opts).await?;
+                }
             }
         }
     }

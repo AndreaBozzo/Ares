@@ -17,6 +17,22 @@ services:
       timeout: 5s
       retries: 5
 
+# Optional: Application server
+#  server:
+#    build: .
+#    container_name: ares_server
+#    restart: always
+#    env_file:
+#      - path: .env
+#        required: false
+#    environment:
+#      DATABASE_URL: postgresql://ares_user:password@db:5432/ares_db
+#    ports:
+#      - "3000:3000"
+#    depends_on:
+#      db:
+#        condition: service_healthy
+
   pgadmin:
     image: dpage/pgadmin4
     container_name: ares_pgadmin
