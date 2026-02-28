@@ -179,10 +179,10 @@ impl SchemaResolver {
                 AppError::SchemaError(format!("Failed to read directory entry: {e}"))
             })?;
             let path = entry.path();
-            if path.extension().is_some_and(|ext| ext == "json") {
-                if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-                    versions.push(stem.to_string());
-                }
+            if path.extension().is_some_and(|ext| ext == "json")
+                && let Some(stem) = path.file_stem().and_then(|s| s.to_str())
+            {
+                versions.push(stem.to_string());
             }
         }
 

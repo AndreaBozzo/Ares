@@ -68,6 +68,17 @@ jobs:
           fi
           echo "CHANGELOG entry found for $VERSION"
 
+      - name: Verify internal dependency versions
+        run: |
+          for crate in ares-core ares-client ares-db; do
+            if ! grep -q "${crate} = { version" Cargo.toml; then
+              echo "::error::Internal dependency $crate is missing 'version' field in workspace Cargo.toml"
+              echo "::error::Run the 'Prepare Release' workflow first"
+              exit 1
+            fi
+          done
+          echo "All internal dependencies have version fields"
+
       - name: Install git-cliff
         uses: taiki-e/install-action@v2
         with:
@@ -209,8 +220,12 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
-      - name: Dry run publish ares-core
-        run: cargo publish --dry-run -p ares-core
+      - name: Dry run publish all crates
+        run: |
+          for crate in ares-core ares-client ares-db ares-cli ares-api; do
+            echo "Dry-run publishing $crate..."
+            cargo publish --dry-run -p "$crate"
+          done
 
   publish:
     name: Publish to crates.io

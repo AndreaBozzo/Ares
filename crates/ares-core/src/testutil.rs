@@ -424,19 +424,19 @@ impl JobQueue for MockJobQueue {
 
     async fn retry_job(&self, job_id: Uuid) -> Result<Option<ScrapeJob>, AppError> {
         let mut jobs = self.jobs.lock().unwrap();
-        if let Some(job) = jobs.iter_mut().find(|j| j.id == job_id) {
-            if matches!(job.status, JobStatus::Failed | JobStatus::Cancelled) {
-                job.status = JobStatus::Pending;
-                job.retry_count = 0;
-                job.error_message = None;
-                job.worker_id = None;
-                job.started_at = None;
-                job.completed_at = None;
-                job.extraction_id = None;
-                job.next_retry_at = None;
-                job.updated_at = Utc::now();
-                return Ok(Some(job.clone()));
-            }
+        if let Some(job) = jobs.iter_mut().find(|j| j.id == job_id)
+            && matches!(job.status, JobStatus::Failed | JobStatus::Cancelled)
+        {
+            job.status = JobStatus::Pending;
+            job.retry_count = 0;
+            job.error_message = None;
+            job.worker_id = None;
+            job.started_at = None;
+            job.completed_at = None;
+            job.extraction_id = None;
+            job.next_retry_at = None;
+            job.updated_at = Utc::now();
+            return Ok(Some(job.clone()));
         }
         Ok(None)
     }
