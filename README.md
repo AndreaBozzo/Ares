@@ -9,6 +9,7 @@
 </p>
 
 <p align="center">
+  <a href="https://crates.io/crates/ares-core"><img src="https://img.shields.io/crates/v/ares-core.svg" alt="crates.io"></a>
   <a href="https://github.com/AndreaBozzo/Ares/actions/workflows/ci.yml"><img src="https://github.com/AndreaBozzo/Ares/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://discord.gg/fztdKSPXSz"><img src="https://img.shields.io/discord/1469399961987711161?color=5865F2&logo=discord&logoColor=white&label=Discord" alt="Discord"></a>
 </p>
@@ -22,8 +23,6 @@ Ares fetches web pages, converts HTML to Markdown, and uses LLM APIs to extract 
 Conceptual sibling of [Ceres](https://github.com/AndreaBozzo/Ceres) — same philosophy, different temperament. Where Ceres is the nurturing goddess of harvest, Ares charges headfirst into the web and *takes* what it needs.
 
 > 💡 **Claude Code user?** Install the [Ares Claude Skill](https://github.com/AndreaBozzo/Ares-Claude-Skill) to give Claude deep knowledge of Ares — architecture, traits, CLI, REST API, schemas, and extension patterns.
-
-> **Ares 0.1.0** releases on crates.io on **March 1st, 2026**. This skill will be published to the Anthropic Skill Marketplace shortly after.
 
 
 ## Architecture
