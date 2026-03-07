@@ -15,7 +15,56 @@ use ares_core::worker::{TracingWorkerReporter, WorkerService};
 use ares_core::{NullStore, SchemaResolver, ScrapeService, ThrottleConfig, ThrottledFetcher};
 use ares_db::{Database, DatabaseConfig, ExtractionRepository};
 
-// TODO(#2): Extract shared wiring to ares-api for HTTP API
+// ---------------------------------------------------------------------------
+// Fetcher creation — shared by Scrape and Worker commands.
+// ---------------------------------------------------------------------------
+
+/// Creates a fetcher (browser or reqwest, with optional throttle wrapping)
+/// and passes it to a generic async body. Uses a macro because `Fetcher`
+/// is not object-safe (returns `impl Future`).
+macro_rules! with_fetcher {
+    ($browser:expr, $timeout:expr, $throttle:expr, |$f:ident| $body:expr) => {{
+        async {
+            if $browser {
+                let base = create_browser_fetcher($timeout).await?;
+                match $throttle.filter(|&ms| ms > 0) {
+                    Some(ms) => {
+                        let $f = ThrottledFetcher::new(
+                            base,
+                            ThrottleConfig::new(Duration::from_millis(ms)),
+                        );
+                        $body
+                    }
+                    None => {
+                        let $f = base;
+                        $body
+                    }
+                }
+            } else {
+                let base = match $timeout {
+                    Some(t) => ReqwestFetcher::with_timeout(t),
+                    None => ReqwestFetcher::new(),
+                }
+                .context("Failed to create HTTP client")?
+                .allow_private_urls();
+                match $throttle.filter(|&ms| ms > 0) {
+                    Some(ms) => {
+                        let $f = ThrottledFetcher::new(
+                            base,
+                            ThrottleConfig::new(Duration::from_millis(ms)),
+                        );
+                        $body
+                    }
+                    None => {
+                        let $f = base;
+                        $body
+                    }
+                }
+            }
+        }
+    }};
+}
+
 #[derive(Parser)]
 #[command(name = "ares", version, about = "Industrial Grade AI Scraper")]
 struct Cli {
@@ -234,6 +283,7 @@ async fn main() -> Result<()> {
             let schema_name = schema_name.unwrap_or(resolved.name);
             let schema_value = resolved.schema;
 
+            let fetch_timeout = fetch_timeout.map(Duration::from_secs);
             let opts = ScrapeOpts {
                 url: &url,
                 schema_value,
@@ -242,40 +292,14 @@ async fn main() -> Result<()> {
                 base_url: &base_url,
                 api_key: &api_key,
                 save,
-                fetch_timeout: fetch_timeout.map(Duration::from_secs),
                 llm_timeout: llm_timeout.map(Duration::from_secs),
                 system_prompt: system_prompt.as_deref(),
                 skip_unchanged,
             };
 
-            if browser {
-                let fetcher = create_browser_fetcher(opts.fetch_timeout).await?;
-                if let Some(ms) = throttle.filter(|&ms| ms > 0) {
-                    let fetcher = ThrottledFetcher::new(
-                        fetcher,
-                        ThrottleConfig::new(Duration::from_millis(ms)),
-                    );
-                    cmd_scrape(fetcher, opts).await?;
-                } else {
-                    cmd_scrape(fetcher, opts).await?;
-                }
-            } else {
-                let fetcher = match opts.fetch_timeout {
-                    Some(t) => ReqwestFetcher::with_timeout(t),
-                    None => ReqwestFetcher::new(),
-                }
-                .context("Failed to create HTTP client")?
-                .allow_private_urls();
-                if let Some(ms) = throttle.filter(|&ms| ms > 0) {
-                    let fetcher = ThrottledFetcher::new(
-                        fetcher,
-                        ThrottleConfig::new(Duration::from_millis(ms)),
-                    );
-                    cmd_scrape(fetcher, opts).await?;
-                } else {
-                    cmd_scrape(fetcher, opts).await?;
-                }
-            }
+            with_fetcher!(browser, fetch_timeout, throttle, |f| cmd_scrape(f, opts)
+                .await)
+            .await?;
         }
 
         Commands::History {
@@ -420,34 +444,10 @@ async fn main() -> Result<()> {
                 skip_unchanged,
             };
 
-            if browser {
-                let fetcher = create_browser_fetcher(worker_opts.fetch_timeout).await?;
-                if let Some(ms) = throttle.filter(|&ms| ms > 0) {
-                    let fetcher = ThrottledFetcher::new(
-                        fetcher,
-                        ThrottleConfig::new(Duration::from_millis(ms)),
-                    );
-                    cmd_worker(fetcher, worker_opts).await?;
-                } else {
-                    cmd_worker(fetcher, worker_opts).await?;
-                }
-            } else {
-                let fetcher = match worker_opts.fetch_timeout {
-                    Some(t) => ReqwestFetcher::with_timeout(t),
-                    None => ReqwestFetcher::new(),
-                }
-                .context("Failed to create HTTP client")?
-                .allow_private_urls();
-                if let Some(ms) = throttle.filter(|&ms| ms > 0) {
-                    let fetcher = ThrottledFetcher::new(
-                        fetcher,
-                        ThrottleConfig::new(Duration::from_millis(ms)),
-                    );
-                    cmd_worker(fetcher, worker_opts).await?;
-                } else {
-                    cmd_worker(fetcher, worker_opts).await?;
-                }
-            }
+            with_fetcher!(browser, worker_opts.fetch_timeout, throttle, |f| {
+                cmd_worker(f, worker_opts).await
+            })
+            .await?;
         }
     }
 
@@ -468,7 +468,6 @@ struct ScrapeOpts<'a> {
     base_url: &'a str,
     api_key: &'a str,
     save: bool,
-    fetch_timeout: Option<Duration>,
     llm_timeout: Option<Duration>,
     system_prompt: Option<&'a str>,
     skip_unchanged: bool,
