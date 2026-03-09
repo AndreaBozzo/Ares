@@ -93,6 +93,9 @@ pub async fn scrape(
 
     let save = body.save.unwrap_or(true);
 
+    // Validate schema
+    ares_core::validate_schema(&body.schema)?;
+
     // Build pipeline components
     let fetcher = ReqwestFetcher::new()?;
     let cleaner = HtmdCleaner::new();

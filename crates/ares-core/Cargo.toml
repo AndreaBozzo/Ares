@@ -16,6 +16,7 @@ tracing.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
 url.workspace = true
+jsonschema.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

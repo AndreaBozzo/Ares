@@ -12,7 +12,9 @@ use ares_core::job::{CreateScrapeJobRequest, JobStatus, WorkerConfig};
 use ares_core::job_queue::JobQueue;
 use ares_core::traits::Fetcher;
 use ares_core::worker::{TracingWorkerReporter, WorkerService};
-use ares_core::{NullStore, SchemaResolver, ScrapeService, ThrottleConfig, ThrottledFetcher};
+use ares_core::{
+    NullStore, SchemaResolver, ScrapeService, ThrottleConfig, ThrottledFetcher, validate_schema,
+};
 use ares_db::{Database, DatabaseConfig, ExtractionRepository};
 
 // ---------------------------------------------------------------------------
@@ -155,6 +157,12 @@ enum Commands {
         action: JobCommands,
     },
 
+    /// Manage schemas
+    Schema {
+        #[command(subcommand)]
+        action: SchemaCommands,
+    },
+
     /// Start a worker to process scrape jobs
     Worker {
         /// Worker ID (auto-generated if not provided)
@@ -251,6 +259,16 @@ enum JobCommands {
     },
 }
 
+#[derive(Subcommand)]
+enum SchemaCommands {
+    /// Validate a JSON Schema file
+    Validate {
+        /// Path to the JSON Schema file
+        #[arg(value_name = "PATH")]
+        path: String,
+    },
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let _ = dotenvy::dotenv();
@@ -280,6 +298,7 @@ async fn main() -> Result<()> {
             throttle,
         } => {
             let resolved = SchemaResolver::new("schemas").resolve(&schema)?;
+            validate_schema(&resolved.schema).map_err(|e| anyhow::anyhow!("{e}"))?;
             let schema_name = schema_name.unwrap_or(resolved.name);
             let schema_value = resolved.schema;
 
@@ -422,6 +441,17 @@ async fn main() -> Result<()> {
                 }
             }
         }
+
+        Commands::Schema { action } => match action {
+            SchemaCommands::Validate { path } => {
+                let content = std::fs::read_to_string(&path)
+                    .with_context(|| format!("Failed to read file: {path}"))?;
+                let value: serde_json::Value = serde_json::from_str(&content)
+                    .with_context(|| format!("Invalid JSON in file: {path}"))?;
+                validate_schema(&value).map_err(|e| anyhow::anyhow!("{e}"))?;
+                println!("Valid JSON Schema: {path}");
+            }
+        },
 
         Commands::Worker {
             worker_id,

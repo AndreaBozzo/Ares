@@ -19,7 +19,9 @@ pub use error::AppError;
 pub use job::{CreateScrapeJobRequest, JobStatus, RetryConfig, ScrapeJob, WorkerConfig};
 pub use job_queue::JobQueue;
 pub use models::{Extraction, ExtractionSchema, NewExtraction, ScrapeResult, compute_hash};
-pub use schema::{ResolvedSchema, SchemaEntry, SchemaResolver, derive_schema_name};
+pub use schema::{
+    ResolvedSchema, SchemaEntry, SchemaResolver, derive_schema_name, validate_schema,
+};
 pub use scrape::ScrapeService;
 pub use throttle::{ThrottleConfig, ThrottledFetcher};
 pub use traits::{Cleaner, ExtractionStore, Extractor, ExtractorFactory, Fetcher, NullStore};

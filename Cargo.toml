@@ -70,6 +70,9 @@ htmd = "0.5.0"
 chromiumoxide = { version = "0.8", features = ["tokio-runtime"], default-features = false }
 futures = "0.3.32"
 
+# JSON Schema validation
+jsonschema = { version = "0.45", default-features = false }
+
 # URL
 url = "2"
 
