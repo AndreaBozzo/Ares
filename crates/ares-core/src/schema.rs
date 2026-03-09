@@ -3,6 +3,24 @@ use std::path::{Path, PathBuf};
 
 use crate::error::AppError;
 
+/// Validate that a JSON value is a valid JSON Schema.
+///
+/// Uses meta-schema validation to check conformance against the JSON Schema
+/// specification. Returns an error with details if the schema is invalid.
+pub fn validate_schema(value: &serde_json::Value) -> Result<(), AppError> {
+    if !value.is_object() {
+        return Err(AppError::SchemaError(
+            "JSON Schema must be a JSON object".to_string(),
+        ));
+    }
+
+    jsonschema::meta::options()
+        .validate(value)
+        .map_err(|e| AppError::SchemaError(format!("Invalid JSON Schema: {e}")))?;
+
+    Ok(())
+}
+
 /// A fully resolved schema: path, canonical name, and parsed JSON.
 #[derive(Debug, Clone)]
 pub struct ResolvedSchema {
@@ -206,6 +224,9 @@ impl SchemaResolver {
             ));
         }
 
+        // Validate JSON Schema conformance
+        validate_schema(schema)?;
+
         let schema_path = self.schemas_dir.join(name).join(format!("{version}.json"));
         if !schema_path.exists() {
             return Err(AppError::SchemaNotFound {
@@ -293,6 +314,9 @@ impl SchemaResolver {
                 "Schema name and version must not be empty".to_string(),
             ));
         }
+
+        // Validate JSON Schema conformance
+        validate_schema(schema)?;
 
         // Create directory if needed
         let schema_dir = self.schemas_dir.join(name);
@@ -757,6 +781,103 @@ mod tests {
 
         let registry = resolver.load_registry().unwrap();
         assert_eq!(registry.get("blog").unwrap(), "2.0.0");
+    }
+
+    // -----------------------------------------------------------------------
+    // validate_schema tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_validate_schema_valid_object() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "title": { "type": "string" },
+                "count": { "type": "integer" }
+            },
+            "required": ["title"]
+        });
+        assert!(validate_schema(&schema).is_ok());
+    }
+
+    #[test]
+    fn test_validate_schema_empty_object() {
+        // An empty object is a valid JSON Schema (matches anything).
+        let schema = serde_json::json!({});
+        assert!(validate_schema(&schema).is_ok());
+    }
+
+    #[test]
+    fn test_validate_schema_rejects_non_object() {
+        let schema = serde_json::json!("not an object");
+        let err = validate_schema(&schema).unwrap_err();
+        assert!(matches!(err, AppError::SchemaError(_)));
+        assert!(err.to_string().contains("must be a JSON object"));
+    }
+
+    #[test]
+    fn test_validate_schema_rejects_array() {
+        let schema = serde_json::json!([1, 2, 3]);
+        let err = validate_schema(&schema).unwrap_err();
+        assert!(matches!(err, AppError::SchemaError(_)));
+    }
+
+    #[test]
+    fn test_validate_schema_rejects_invalid_type_value() {
+        let schema = serde_json::json!({
+            "type": "not_a_valid_type"
+        });
+        let err = validate_schema(&schema).unwrap_err();
+        assert!(matches!(err, AppError::SchemaError(_)));
+        assert!(err.to_string().contains("Invalid JSON Schema"));
+    }
+
+    #[test]
+    fn test_validate_schema_rejects_bad_properties() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": "not an object"
+        });
+        let err = validate_schema(&schema).unwrap_err();
+        assert!(matches!(err, AppError::SchemaError(_)));
+    }
+
+    #[test]
+    fn test_create_schema_rejects_invalid_schema() {
+        let tmp = TempDir::new().unwrap();
+        let schemas_dir = tmp.path().join("schemas");
+        std::fs::create_dir_all(&schemas_dir).unwrap();
+
+        let resolver = SchemaResolver::new(&schemas_dir);
+        let invalid = serde_json::json!({"type": "not_a_valid_type"});
+
+        let err = resolver
+            .create_schema("test", "1.0.0", &invalid)
+            .unwrap_err();
+        assert!(matches!(err, AppError::SchemaError(_)));
+        // File should not have been written
+        assert!(!schemas_dir.join("test/1.0.0.json").exists());
+    }
+
+    #[test]
+    fn test_update_schema_rejects_invalid_schema() {
+        let tmp = TempDir::new().unwrap();
+        let schemas_dir = tmp.path().join("schemas");
+        std::fs::create_dir_all(&schemas_dir).unwrap();
+
+        let resolver = SchemaResolver::new(&schemas_dir);
+        let valid = serde_json::json!({"type": "object"});
+        resolver.create_schema("test", "1.0.0", &valid).unwrap();
+
+        let invalid = serde_json::json!({"type": "not_a_valid_type"});
+        let err = resolver
+            .update_schema("test", "1.0.0", &invalid)
+            .unwrap_err();
+        assert!(matches!(err, AppError::SchemaError(_)));
+
+        // Original content should be preserved
+        let resolved = resolver.resolve("test@1.0.0").unwrap();
+        assert_eq!(resolved.schema, valid);
     }
 
     #[test]

@@ -93,6 +93,9 @@ pub async fn scrape(
 
     let save = body.save.unwrap_or(true);
 
+    // Validate schema
+    ares_core::validate_schema(&body.schema)?;
+
     // Build pipeline components
     let fetcher = ReqwestFetcher::new()?;
     let cleaner = HtmdCleaner::new();
@@ -142,6 +145,9 @@ pub async fn create_job(
     State(state): State<Arc<AppState>>,
     axum::Json(body): axum::Json<CreateJobRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
+    // Validate schema
+    ares_core::validate_schema(&body.schema)?;
+
     let request = CreateScrapeJobRequest::new(
         body.url,
         body.schema_name,
