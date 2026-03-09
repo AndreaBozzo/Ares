@@ -346,6 +346,7 @@ async fn main() -> Result<()> {
                     schema_name,
                 } => {
                     let resolved = SchemaResolver::new("schemas").resolve(&schema)?;
+                    validate_schema(&resolved.schema).map_err(|e| anyhow::anyhow!("{e}"))?;
                     let schema_name = schema_name.unwrap_or(resolved.name);
                     let schema_value = resolved.schema;
 

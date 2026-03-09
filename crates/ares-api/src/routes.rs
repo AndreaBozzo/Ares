@@ -145,6 +145,9 @@ pub async fn create_job(
     State(state): State<Arc<AppState>>,
     axum::Json(body): axum::Json<CreateJobRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
+    // Validate schema
+    ares_core::validate_schema(&body.schema)?;
+
     let request = CreateScrapeJobRequest::new(
         body.url,
         body.schema_name,
