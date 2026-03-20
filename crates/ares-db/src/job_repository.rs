@@ -43,6 +43,8 @@ struct ScrapeJobRow {
     parent_job_id: Option<Uuid>,
     depth: i32,
     max_depth: i32,
+    max_pages: i32,
+    allowed_domains: serde_json::Value,
 }
 
 impl TryFrom<ScrapeJobRow> for ScrapeJob {
@@ -74,6 +76,8 @@ impl TryFrom<ScrapeJobRow> for ScrapeJob {
             parent_job_id: row.parent_job_id,
             depth: row.depth as u32,
             max_depth: row.max_depth as u32,
+            max_pages: row.max_pages as u32,
+            allowed_domains: serde_json::from_value(row.allowed_domains).unwrap_or_default(),
         })
     }
 }
@@ -103,9 +107,10 @@ impl JobQueue for ScrapeJobRepository {
             r#"
             INSERT INTO scrape_jobs (
                 url, schema_name, schema, model, base_url, max_retries,
-                crawl_session_id, parent_job_id, depth, max_depth
+                crawl_session_id, parent_job_id, depth, max_depth,
+                max_pages, allowed_domains
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
             RETURNING *
             "#,
         )
@@ -119,6 +124,8 @@ impl JobQueue for ScrapeJobRepository {
         .bind(request.parent_job_id)
         .bind(request.depth as i32)
         .bind(request.max_depth as i32)
+        .bind(request.max_pages as i32)
+        .bind(serde_json::to_value(&request.allowed_domains).unwrap_or_default())
         .fetch_one(&self.pool)
         .await
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
@@ -338,23 +345,9 @@ impl JobQueue for ScrapeJobRepository {
         Ok(count)
     }
 
-    async fn is_url_visited(&self, session_id: Uuid, url: &str) -> Result<bool, AppError> {
+    async fn mark_url_visited(&self, session_id: Uuid, url: &str) -> Result<bool, AppError> {
         let url_hash = ares_core::compute_hash(url);
-        let row: Option<(Uuid,)> = sqlx::query_as(
-            r#"SELECT session_id FROM crawl_visited_urls WHERE session_id = $1 AND url_hash = $2"#,
-        )
-        .bind(session_id)
-        .bind(url_hash)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| AppError::DatabaseError(e.to_string()))?;
-
-        Ok(row.is_some())
-    }
-
-    async fn mark_url_visited(&self, session_id: Uuid, url: &str) -> Result<(), AppError> {
-        let url_hash = ares_core::compute_hash(url);
-        sqlx::query(
+        let result = sqlx::query(
             r#"
             INSERT INTO crawl_visited_urls (session_id, url_hash)
             VALUES ($1, $2)
@@ -367,7 +360,18 @@ impl JobQueue for ScrapeJobRepository {
         .await
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
-        Ok(())
+        Ok(result.rows_affected() > 0)
+    }
+
+    async fn count_visited_urls(&self, session_id: Uuid) -> Result<i64, AppError> {
+        let (count,): (i64,) =
+            sqlx::query_as(r#"SELECT COUNT(*) FROM crawl_visited_urls WHERE session_id = $1"#)
+                .bind(session_id)
+                .fetch_one(&self.pool)
+                .await
+                .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+
+        Ok(count)
     }
 }
 

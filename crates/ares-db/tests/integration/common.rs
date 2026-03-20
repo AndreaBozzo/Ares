@@ -65,6 +65,10 @@ const MIGRATIONS: &[&str] = &[
        ON scrape_jobs(crawl_session_id, created_at DESC)"#,
     r#"CREATE INDEX IF NOT EXISTS idx_scrape_jobs_parent
        ON scrape_jobs(parent_job_id)"#,
+    // 003_crawl_support.sql (crawl config columns)
+    r#"ALTER TABLE scrape_jobs
+       ADD COLUMN IF NOT EXISTS max_pages INTEGER NOT NULL DEFAULT 100,
+       ADD COLUMN IF NOT EXISTS allowed_domains JSONB NOT NULL DEFAULT '[]'"#,
 ];
 
 /// Spins up a PostgreSQL container and returns a connected pool.

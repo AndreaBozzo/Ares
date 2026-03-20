@@ -283,6 +283,43 @@ impl LinkDiscoverer for MockLinkDiscoverer {
 }
 
 // ---------------------------------------------------------------------------
+// MockRobotsChecker
+// ---------------------------------------------------------------------------
+
+/// Mock robots.txt checker that allows all URLs by default.
+#[derive(Clone)]
+pub struct MockRobotsChecker {
+    pub blocked_urls: Arc<Mutex<Vec<String>>>,
+}
+
+impl MockRobotsChecker {
+    pub fn new() -> Self {
+        Self {
+            blocked_urls: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+
+    pub fn with_blocked(urls: Vec<String>) -> Self {
+        Self {
+            blocked_urls: Arc::new(Mutex::new(urls)),
+        }
+    }
+}
+
+impl Default for MockRobotsChecker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl crate::traits::RobotsChecker for MockRobotsChecker {
+    async fn is_allowed(&self, url: &str) -> bool {
+        let blocked = self.blocked_urls.lock().unwrap();
+        !blocked.iter().any(|b| url.contains(b))
+    }
+}
+
+// ---------------------------------------------------------------------------
 // MockJobQueue
 // ---------------------------------------------------------------------------
 
@@ -295,7 +332,7 @@ pub type CompletedJobRecord = (Uuid, Option<Uuid>);
 /// Mock job queue backed by an in-memory Vec.
 #[derive(Clone)]
 pub struct MockJobQueue {
-    jobs: Arc<Mutex<Vec<ScrapeJob>>>,
+    pub jobs: Arc<Mutex<Vec<ScrapeJob>>>,
     claim_error: Arc<Mutex<Option<AppError>>>,
     pub failed_jobs: Arc<Mutex<Vec<FailedJobRecord>>>,
     pub completed_jobs: Arc<Mutex<Vec<CompletedJobRecord>>>,
@@ -363,6 +400,8 @@ impl JobQueue for MockJobQueue {
             parent_job_id: request.parent_job_id,
             depth: request.depth,
             max_depth: request.max_depth,
+            max_pages: request.max_pages,
+            allowed_domains: request.allowed_domains,
         };
         self.jobs.lock().unwrap().push(job.clone());
         Ok(job)
@@ -511,15 +550,19 @@ impl JobQueue for MockJobQueue {
         Ok(jobs.iter().filter(|j| j.status == status).count() as i64)
     }
 
-    async fn is_url_visited(&self, session_id: Uuid, url: &str) -> Result<bool, AppError> {
-        let visited = self.visited_urls.lock().unwrap();
-        Ok(visited.iter().any(|(s, u)| *s == session_id && u == url))
+    async fn mark_url_visited(&self, session_id: Uuid, url: &str) -> Result<bool, AppError> {
+        let mut visited = self.visited_urls.lock().unwrap();
+        if visited.iter().any(|(s, u)| *s == session_id && u == url) {
+            Ok(false)
+        } else {
+            visited.push((session_id, url.to_string()));
+            Ok(true)
+        }
     }
 
-    async fn mark_url_visited(&self, session_id: Uuid, url: &str) -> Result<(), AppError> {
-        let mut visited = self.visited_urls.lock().unwrap();
-        visited.push((session_id, url.to_string()));
-        Ok(())
+    async fn count_visited_urls(&self, session_id: Uuid) -> Result<i64, AppError> {
+        let visited = self.visited_urls.lock().unwrap();
+        Ok(visited.iter().filter(|(s, _)| *s == session_id).count() as i64)
     }
 }
 
@@ -583,6 +626,8 @@ pub fn make_test_job() -> ScrapeJob {
         parent_job_id: None,
         depth: 0,
         max_depth: 0,
+        max_pages: 100,
+        allowed_domains: Vec::new(),
     }
 }
 

@@ -117,6 +117,8 @@ pub struct ScrapeJob {
     pub parent_job_id: Option<Uuid>,
     pub depth: u32,
     pub max_depth: u32,
+    pub max_pages: u32,
+    pub allowed_domains: Vec<String>,
 }
 
 impl ScrapeJob {
@@ -143,6 +145,8 @@ pub struct CreateScrapeJobRequest {
     pub parent_job_id: Option<Uuid>,
     pub depth: u32,
     pub max_depth: u32,
+    pub max_pages: u32,
+    pub allowed_domains: Vec<String>,
 }
 
 impl CreateScrapeJobRequest {
@@ -164,6 +168,8 @@ impl CreateScrapeJobRequest {
             parent_job_id: None,
             depth: 0,
             max_depth: 0,
+            max_pages: 100,
+            allowed_domains: Vec::new(),
         }
     }
 
@@ -183,6 +189,12 @@ impl CreateScrapeJobRequest {
         self.parent_job_id = parent_id;
         self.depth = depth;
         self.max_depth = max_depth;
+        self
+    }
+
+    pub fn with_crawl_config(mut self, max_pages: u32, allowed_domains: Vec<String>) -> Self {
+        self.max_pages = max_pages;
+        self.allowed_domains = allowed_domains;
         self
     }
 }
@@ -300,6 +312,8 @@ mod tests {
             parent_job_id: None,
             depth: 0,
             max_depth: 0,
+            max_pages: 100,
+            allowed_domains: Vec::new(),
         };
         assert!(!job.can_retry());
 
@@ -333,6 +347,8 @@ mod tests {
             parent_job_id: None,
             depth: 0,
             max_depth: 0,
+            max_pages: 100,
+            allowed_domains: Vec::new(),
         };
         assert!(!job.can_retry());
     }

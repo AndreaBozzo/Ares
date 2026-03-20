@@ -94,3 +94,22 @@ impl ExtractionStore for NullStore {
 pub trait LinkDiscoverer: Send + Sync + Clone {
     fn discover_links(&self, html: &str, base_url: &str) -> Result<Vec<String>, AppError>;
 }
+
+/// Checks if a URL is allowed by the site's robots.txt rules.
+///
+/// Implementations should cache robots.txt per domain to avoid repeated fetches.
+pub trait RobotsChecker: Send + Sync + Clone {
+    /// Returns `true` if the URL may be fetched according to robots.txt.
+    /// On fetch/parse errors, defaults to allowing (graceful degradation).
+    fn is_allowed(&self, url: &str) -> impl Future<Output = bool> + Send;
+}
+
+/// A no-op RobotsChecker that allows all URLs.
+#[derive(Debug, Clone)]
+pub struct NoRobotsChecker;
+
+impl RobotsChecker for NoRobotsChecker {
+    async fn is_allowed(&self, _url: &str) -> bool {
+        true
+    }
+}

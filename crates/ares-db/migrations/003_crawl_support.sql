@@ -19,6 +19,11 @@ CREATE TABLE IF NOT EXISTS crawl_visited_urls (
 CREATE INDEX IF NOT EXISTS idx_scrape_jobs_crawl_session
 ON scrape_jobs(crawl_session_id, created_at DESC);
 
+-- 3. Add crawl config columns
+ALTER TABLE scrape_jobs
+ADD COLUMN IF NOT EXISTS max_pages INTEGER NOT NULL DEFAULT 100,
+ADD COLUMN IF NOT EXISTS allowed_domains JSONB NOT NULL DEFAULT '[]';
+
 -- Index for parent/child relationship
 CREATE INDEX IF NOT EXISTS idx_scrape_jobs_parent
 ON scrape_jobs(parent_job_id);

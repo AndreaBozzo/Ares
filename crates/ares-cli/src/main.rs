@@ -7,7 +7,8 @@ use tracing_subscriber::EnvFilter;
 use uuid::Uuid;
 
 use ares_client::{
-    HtmdCleaner, HtmlLinkDiscoverer, OpenAiExtractor, OpenAiExtractorFactory, ReqwestFetcher,
+    CachedRobotsChecker, HtmdCleaner, HtmlLinkDiscoverer, OpenAiExtractor, OpenAiExtractorFactory,
+    ReqwestFetcher,
 };
 use ares_core::circuit_breaker::{CircuitBreaker, CircuitBreakerConfig};
 use ares_core::job::{CreateScrapeJobRequest, JobStatus, WorkerConfig};
@@ -295,6 +296,14 @@ enum CrawlCommands {
         )]
         base_url: String,
 
+        /// Maximum number of pages to crawl
+        #[arg(long, default_value_t = 100)]
+        max_pages: u32,
+
+        /// Allowed domains (comma-separated; defaults to seed URL domain)
+        #[arg(long, value_delimiter = ',')]
+        allowed_domains: Vec<String>,
+
         /// Schema name (defaults to filename without extension)
         #[arg(long)]
         schema_name: Option<String>,
@@ -548,12 +557,25 @@ async fn main() -> Result<()> {
                     max_depth,
                     model,
                     base_url,
+                    max_pages,
+                    allowed_domains,
                     schema_name,
                 } => {
                     let resolved = SchemaResolver::new("schemas").resolve(&schema)?;
                     validate_schema(&resolved.schema).map_err(|e| anyhow::anyhow!("{e}"))?;
                     let schema_name = schema_name.unwrap_or(resolved.name);
                     let schema_value = resolved.schema;
+
+                    // Default allowed_domains to seed URL's host
+                    let allowed_domains: Vec<String> = if allowed_domains.is_empty() {
+                        url::Url::parse(&url)
+                            .ok()
+                            .and_then(|u| u.host_str().map(String::from))
+                            .into_iter()
+                            .collect()
+                    } else {
+                        allowed_domains
+                    };
 
                     let session_id = Uuid::new_v4();
                     let request = CreateScrapeJobRequest::new(
@@ -563,7 +585,8 @@ async fn main() -> Result<()> {
                         model,
                         base_url,
                     )
-                    .with_crawl_context(session_id, None, 0, max_depth);
+                    .with_crawl_context(session_id, None, 0, max_depth)
+                    .with_crawl_config(max_pages, allowed_domains);
 
                     let job = db.job_repo().create_job(request).await?;
                     println!("Crawl started!");
@@ -728,6 +751,7 @@ async fn cmd_worker<F: Fetcher>(fetcher: F, opts: WorkerOpts<'_>) -> Result<()> 
         extractor_factory = extractor_factory.with_system_prompt(p);
     }
     let discoverer = HtmlLinkDiscoverer::new();
+    let robots_checker = CachedRobotsChecker::with_user_agent("Ares/1.0");
     let cb = CircuitBreaker::new("llm", CircuitBreakerConfig::default());
 
     let worker = WorkerService::new(
@@ -737,6 +761,7 @@ async fn cmd_worker<F: Fetcher>(fetcher: F, opts: WorkerOpts<'_>) -> Result<()> 
         extractor_factory,
         extraction_repo,
         discoverer,
+        robots_checker,
         cb,
         config,
     );

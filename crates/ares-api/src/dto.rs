@@ -247,6 +247,7 @@ pub struct CrawlRequest {
     pub base_url: String,
     pub max_depth: u32,
     pub max_pages: Option<u32>,
+    pub allowed_domains: Option<Vec<String>>,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]

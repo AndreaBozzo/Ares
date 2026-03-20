@@ -27,6 +27,7 @@ pub use schema::{
 pub use scrape::ScrapeService;
 pub use throttle::{ThrottleConfig, ThrottledFetcher};
 pub use traits::{
-    Cleaner, ExtractionStore, Extractor, ExtractorFactory, Fetcher, LinkDiscoverer, NullStore,
+    Cleaner, ExtractionStore, Extractor, ExtractorFactory, Fetcher, LinkDiscoverer,
+    NoRobotsChecker, NullStore, RobotsChecker,
 };
 pub use worker::{WorkerEvent, WorkerService};

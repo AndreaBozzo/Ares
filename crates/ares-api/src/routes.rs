@@ -585,6 +585,16 @@ pub async fn start_crawl(
 
     let session_id = Uuid::new_v4();
 
+    // Default allowed_domains to seed URL's host
+    let allowed_domains = match body.allowed_domains {
+        Some(ref domains) if !domains.is_empty() => domains.clone(),
+        _ => url::Url::parse(&body.url)
+            .ok()
+            .and_then(|u| u.host_str().map(String::from))
+            .into_iter()
+            .collect(),
+    };
+
     // Create the seed job
     let request = CreateScrapeJobRequest::new(
         body.url,
@@ -593,7 +603,8 @@ pub async fn start_crawl(
         body.model,
         body.base_url,
     )
-    .with_crawl_context(session_id, None, 0, body.max_depth);
+    .with_crawl_context(session_id, None, 0, body.max_depth)
+    .with_crawl_config(body.max_pages.unwrap_or(100), allowed_domains);
 
     let job = state.db.job_repo().create_job(request).await?;
 
@@ -675,12 +686,15 @@ pub async fn get_crawl_results(
     // This helper method would find all extractions associated with jobs in this crawl session
     let extractions = state.db.extraction_repo().get_by_crawl_session(id).await?;
 
+    let extractions: Vec<ExtractionResponse> = extractions
+        .into_iter()
+        .map(ExtractionResponse::from)
+        .collect();
+    let total = extractions.len();
+
     let response = ExtractionHistoryResponse {
-        extractions: extractions
-            .into_iter()
-            .map(ExtractionResponse::from)
-            .collect(),
-        total: 0, // Pending implementation of total count
+        extractions,
+        total,
         limit: 0,
         offset: 0,
     };
