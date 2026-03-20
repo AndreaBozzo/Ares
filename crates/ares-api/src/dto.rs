@@ -44,6 +44,10 @@ pub struct JobResponse {
     pub error_message: Option<String>,
     pub extraction_id: Option<Uuid>,
     pub worker_id: Option<String>,
+    pub crawl_session_id: Option<Uuid>,
+    pub parent_job_id: Option<Uuid>,
+    pub depth: u32,
+    pub max_depth: u32,
 }
 
 impl From<ScrapeJob> for JobResponse {
@@ -66,6 +70,10 @@ impl From<ScrapeJob> for JobResponse {
             error_message: job.error_message,
             extraction_id: job.extraction_id,
             worker_id: job.worker_id,
+            crawl_session_id: job.crawl_session_id,
+            parent_job_id: job.parent_job_id,
+            depth: job.depth,
+            max_depth: job.max_depth,
         }
     }
 }
@@ -224,4 +232,35 @@ pub struct CreateSchemaResponse {
 pub struct ErrorResponse {
     pub error: String,
     pub message: String,
+}
+
+// ---------------------------------------------------------------------------
+// Crawl
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct CrawlRequest {
+    pub url: String,
+    pub schema_name: String,
+    pub schema: serde_json::Value,
+    pub model: String,
+    pub base_url: String,
+    pub max_depth: u32,
+    pub max_pages: Option<u32>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct CrawlResponse {
+    pub session_id: Uuid,
+    pub status: String,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct CrawlStatusResponse {
+    pub session_id: Uuid,
+    pub total_jobs: usize,
+    pub pending_jobs: usize,
+    pub running_jobs: usize,
+    pub completed_jobs: usize,
+    pub failed_jobs: usize,
 }

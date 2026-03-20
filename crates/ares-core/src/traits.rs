@@ -89,3 +89,8 @@ impl ExtractionStore for NullStore {
         Ok(vec![])
     }
 }
+
+/// Discovers links on a page for recursive crawling.
+pub trait LinkDiscoverer: Send + Sync + Clone {
+    fn discover_links(&self, html: &str, base_url: &str) -> Result<Vec<String>, AppError>;
+}

@@ -148,6 +148,7 @@ where
             data_hash,
             changed,
             extraction_id,
+            raw_html: Some(html),
         })
     }
 }

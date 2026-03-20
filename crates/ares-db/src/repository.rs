@@ -111,6 +111,28 @@ impl ExtractionRepository {
             .map_err(|e| AppError::DatabaseError(e.to_string()))?;
         Ok(())
     }
+
+    /// Get all extractions for a crawl session.
+    pub async fn get_by_crawl_session(
+        &self,
+        session_id: Uuid,
+    ) -> Result<Vec<Extraction>, AppError> {
+        let rows = sqlx::query_as::<_, ExtractionRow>(
+            r#"
+            SELECT e.id, e.url, e.schema_name, e.extracted_data, e.raw_content_hash, e.data_hash, e.model, e.created_at
+            FROM extractions e
+            JOIN scrape_jobs j ON e.id = j.extraction_id
+            WHERE j.crawl_session_id = $1
+            ORDER BY e.created_at DESC, e.id DESC
+            "#,
+        )
+        .bind(session_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+
+        Ok(rows.into_iter().map(Into::into).collect())
+    }
 }
 
 // -- Internal row type for sqlx deserialization --

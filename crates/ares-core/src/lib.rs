@@ -1,6 +1,7 @@
 //! Core library for Ares — traits, pipeline logic, job scheduling, and error types.
 
 pub mod circuit_breaker;
+pub mod crawl;
 pub mod error;
 pub mod job;
 pub mod job_queue;
@@ -15,6 +16,7 @@ pub mod worker;
 pub mod testutil;
 
 pub use circuit_breaker::{CircuitBreaker, CircuitBreakerConfig};
+pub use crawl::CrawlConfig;
 pub use error::AppError;
 pub use job::{CreateScrapeJobRequest, JobStatus, RetryConfig, ScrapeJob, WorkerConfig};
 pub use job_queue::JobQueue;
@@ -24,5 +26,7 @@ pub use schema::{
 };
 pub use scrape::ScrapeService;
 pub use throttle::{ThrottleConfig, ThrottledFetcher};
-pub use traits::{Cleaner, ExtractionStore, Extractor, ExtractorFactory, Fetcher, NullStore};
+pub use traits::{
+    Cleaner, ExtractionStore, Extractor, ExtractorFactory, Fetcher, LinkDiscoverer, NullStore,
+};
 pub use worker::{WorkerEvent, WorkerService};

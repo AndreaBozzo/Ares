@@ -19,6 +19,7 @@ serde_json.workspace = true
 tracing.workspace = true
 chromiumoxide = { workspace = true, optional = true }
 futures = { workspace = true, optional = true }
+scraper = "0.26.0"
 
 [dev-dependencies]
 anyhow.workspace = true

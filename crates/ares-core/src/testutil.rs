@@ -13,7 +13,9 @@ use crate::error::AppError;
 use crate::job::{CreateScrapeJobRequest, JobStatus, ScrapeJob};
 use crate::job_queue::JobQueue;
 use crate::models::{Extraction, NewExtraction};
-use crate::traits::{Cleaner, ExtractionStore, Extractor, ExtractorFactory, Fetcher};
+use crate::traits::{
+    Cleaner, ExtractionStore, Extractor, ExtractorFactory, Fetcher, LinkDiscoverer,
+};
 
 // ---------------------------------------------------------------------------
 // MockFetcher
@@ -253,6 +255,34 @@ impl ExtractionStore for MockStore {
 }
 
 // ---------------------------------------------------------------------------
+// MockLinkDiscoverer
+// ---------------------------------------------------------------------------
+
+/// Mock link discoverer that returns a fixed set of links.
+#[derive(Clone, Default)]
+pub struct MockLinkDiscoverer {
+    pub links: Arc<Mutex<Vec<String>>>,
+}
+
+impl MockLinkDiscoverer {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_links(links: Vec<String>) -> Self {
+        Self {
+            links: Arc::new(Mutex::new(links)),
+        }
+    }
+}
+
+impl LinkDiscoverer for MockLinkDiscoverer {
+    fn discover_links(&self, _html: &str, _base_url: &str) -> Result<Vec<String>, AppError> {
+        Ok(self.links.lock().unwrap().clone())
+    }
+}
+
+// ---------------------------------------------------------------------------
 // MockJobQueue
 // ---------------------------------------------------------------------------
 
@@ -270,6 +300,7 @@ pub struct MockJobQueue {
     pub failed_jobs: Arc<Mutex<Vec<FailedJobRecord>>>,
     pub completed_jobs: Arc<Mutex<Vec<CompletedJobRecord>>>,
     pub released_workers: Arc<Mutex<Vec<String>>>,
+    pub visited_urls: Arc<Mutex<Vec<(Uuid, String)>>>,
 }
 
 impl MockJobQueue {
@@ -280,6 +311,7 @@ impl MockJobQueue {
             failed_jobs: Arc::new(Mutex::new(Vec::new())),
             completed_jobs: Arc::new(Mutex::new(Vec::new())),
             released_workers: Arc::new(Mutex::new(Vec::new())),
+            visited_urls: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
@@ -291,6 +323,7 @@ impl MockJobQueue {
             failed_jobs: Arc::new(Mutex::new(Vec::new())),
             completed_jobs: Arc::new(Mutex::new(Vec::new())),
             released_workers: Arc::new(Mutex::new(Vec::new())),
+            visited_urls: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
@@ -301,6 +334,7 @@ impl MockJobQueue {
             failed_jobs: Arc::new(Mutex::new(Vec::new())),
             completed_jobs: Arc::new(Mutex::new(Vec::new())),
             released_workers: Arc::new(Mutex::new(Vec::new())),
+            visited_urls: Arc::new(Mutex::new(Vec::new())),
         }
     }
 }
@@ -325,6 +359,10 @@ impl JobQueue for MockJobQueue {
             error_message: None,
             extraction_id: None,
             worker_id: None,
+            crawl_session_id: request.crawl_session_id,
+            parent_job_id: request.parent_job_id,
+            depth: request.depth,
+            max_depth: request.max_depth,
         };
         self.jobs.lock().unwrap().push(job.clone());
         Ok(job)
@@ -472,6 +510,17 @@ impl JobQueue for MockJobQueue {
         let jobs = self.jobs.lock().unwrap();
         Ok(jobs.iter().filter(|j| j.status == status).count() as i64)
     }
+
+    async fn is_url_visited(&self, session_id: Uuid, url: &str) -> Result<bool, AppError> {
+        let visited = self.visited_urls.lock().unwrap();
+        Ok(visited.iter().any(|(s, u)| *s == session_id && u == url))
+    }
+
+    async fn mark_url_visited(&self, session_id: Uuid, url: &str) -> Result<(), AppError> {
+        let mut visited = self.visited_urls.lock().unwrap();
+        visited.push((session_id, url.to_string()));
+        Ok(())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -530,6 +579,10 @@ pub fn make_test_job() -> ScrapeJob {
         error_message: None,
         extraction_id: None,
         worker_id: None,
+        crawl_session_id: None,
+        parent_job_id: None,
+        depth: 0,
+        max_depth: 0,
     }
 }
 

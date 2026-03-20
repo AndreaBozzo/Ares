@@ -94,7 +94,6 @@ impl RetryConfig {
 }
 
 /// A scrape job in the queue.
-// TODO(#3): Add parent_job_id, crawl_session_id, depth for crawling
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScrapeJob {
     pub id: Uuid,
@@ -114,6 +113,10 @@ pub struct ScrapeJob {
     pub error_message: Option<String>,
     pub extraction_id: Option<Uuid>,
     pub worker_id: Option<String>,
+    pub crawl_session_id: Option<Uuid>,
+    pub parent_job_id: Option<Uuid>,
+    pub depth: u32,
+    pub max_depth: u32,
 }
 
 impl ScrapeJob {
@@ -136,6 +139,10 @@ pub struct CreateScrapeJobRequest {
     pub model: String,
     pub base_url: String,
     pub max_retries: Option<u32>,
+    pub crawl_session_id: Option<Uuid>,
+    pub parent_job_id: Option<Uuid>,
+    pub depth: u32,
+    pub max_depth: u32,
 }
 
 impl CreateScrapeJobRequest {
@@ -153,11 +160,29 @@ impl CreateScrapeJobRequest {
             model: model.into(),
             base_url: base_url.into(),
             max_retries: None,
+            crawl_session_id: None,
+            parent_job_id: None,
+            depth: 0,
+            max_depth: 0,
         }
     }
 
     pub fn with_max_retries(mut self, max: u32) -> Self {
         self.max_retries = Some(max);
+        self
+    }
+
+    pub fn with_crawl_context(
+        mut self,
+        session_id: Uuid,
+        parent_id: Option<Uuid>,
+        depth: u32,
+        max_depth: u32,
+    ) -> Self {
+        self.crawl_session_id = Some(session_id);
+        self.parent_job_id = parent_id;
+        self.depth = depth;
+        self.max_depth = max_depth;
         self
     }
 }
@@ -271,6 +296,10 @@ mod tests {
             error_message: None,
             extraction_id: None,
             worker_id: None,
+            crawl_session_id: None,
+            parent_job_id: None,
+            depth: 0,
+            max_depth: 0,
         };
         assert!(!job.can_retry());
 
@@ -300,6 +329,10 @@ mod tests {
             error_message: None,
             extraction_id: None,
             worker_id: None,
+            crawl_session_id: None,
+            parent_job_id: None,
+            depth: 0,
+            max_depth: 0,
         };
         assert!(!job.can_retry());
     }

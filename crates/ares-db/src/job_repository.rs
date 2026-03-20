@@ -39,6 +39,10 @@ struct ScrapeJobRow {
     error_message: Option<String>,
     extraction_id: Option<Uuid>,
     worker_id: Option<String>,
+    crawl_session_id: Option<Uuid>,
+    parent_job_id: Option<Uuid>,
+    depth: i32,
+    max_depth: i32,
 }
 
 impl TryFrom<ScrapeJobRow> for ScrapeJob {
@@ -66,6 +70,10 @@ impl TryFrom<ScrapeJobRow> for ScrapeJob {
             error_message: row.error_message,
             extraction_id: row.extraction_id,
             worker_id: row.worker_id,
+            crawl_session_id: row.crawl_session_id,
+            parent_job_id: row.parent_job_id,
+            depth: row.depth as u32,
+            max_depth: row.max_depth as u32,
         })
     }
 }
@@ -93,8 +101,11 @@ impl JobQueue for ScrapeJobRepository {
     async fn create_job(&self, request: CreateScrapeJobRequest) -> Result<ScrapeJob, AppError> {
         let row = sqlx::query_as::<_, ScrapeJobRow>(
             r#"
-            INSERT INTO scrape_jobs (url, schema_name, schema, model, base_url, max_retries)
-            VALUES ($1, $2, $3, $4, $5, $6)
+            INSERT INTO scrape_jobs (
+                url, schema_name, schema, model, base_url, max_retries,
+                crawl_session_id, parent_job_id, depth, max_depth
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
             RETURNING *
             "#,
         )
@@ -104,6 +115,10 @@ impl JobQueue for ScrapeJobRepository {
         .bind(&request.model)
         .bind(&request.base_url)
         .bind(request.max_retries.unwrap_or(3) as i32)
+        .bind(request.crawl_session_id)
+        .bind(request.parent_job_id)
+        .bind(request.depth as i32)
+        .bind(request.max_depth as i32)
         .fetch_one(&self.pool)
         .await
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
@@ -321,5 +336,57 @@ impl JobQueue for ScrapeJobRepository {
                 .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
         Ok(count)
+    }
+
+    async fn is_url_visited(&self, session_id: Uuid, url: &str) -> Result<bool, AppError> {
+        let url_hash = ares_core::compute_hash(url);
+        let row: Option<(Uuid,)> = sqlx::query_as(
+            r#"SELECT session_id FROM crawl_visited_urls WHERE session_id = $1 AND url_hash = $2"#,
+        )
+        .bind(session_id)
+        .bind(url_hash)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+
+        Ok(row.is_some())
+    }
+
+    async fn mark_url_visited(&self, session_id: Uuid, url: &str) -> Result<(), AppError> {
+        let url_hash = ares_core::compute_hash(url);
+        sqlx::query(
+            r#"
+            INSERT INTO crawl_visited_urls (session_id, url_hash)
+            VALUES ($1, $2)
+            ON CONFLICT (session_id, url_hash) DO NOTHING
+            "#,
+        )
+        .bind(session_id)
+        .bind(url_hash)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+
+        Ok(())
+    }
+}
+
+impl ScrapeJobRepository {
+    pub async fn list_jobs_by_session(&self, session_id: Uuid) -> Result<Vec<ScrapeJob>, AppError> {
+        let rows = sqlx::query_as::<_, ScrapeJobRow>(
+            r#"
+            SELECT * FROM scrape_jobs
+            WHERE crawl_session_id = $1
+            ORDER BY created_at ASC, id ASC
+            "#,
+        )
+        .bind(session_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+
+        rows.into_iter()
+            .map(ScrapeJob::try_from)
+            .collect::<Result<Vec<_>, _>>()
     }
 }

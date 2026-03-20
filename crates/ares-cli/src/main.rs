@@ -6,7 +6,9 @@ use tokio_util::sync::CancellationToken;
 use tracing_subscriber::EnvFilter;
 use uuid::Uuid;
 
-use ares_client::{HtmdCleaner, OpenAiExtractor, OpenAiExtractorFactory, ReqwestFetcher};
+use ares_client::{
+    HtmdCleaner, HtmlLinkDiscoverer, OpenAiExtractor, OpenAiExtractorFactory, ReqwestFetcher,
+};
 use ares_core::circuit_breaker::{CircuitBreaker, CircuitBreakerConfig};
 use ares_core::job::{CreateScrapeJobRequest, JobStatus, WorkerConfig};
 use ares_core::job_queue::JobQueue;
@@ -150,6 +152,11 @@ enum Commands {
         #[arg(short, long, default_value_t = 10)]
         limit: usize,
     },
+    /// Manage crawl sessions
+    Crawl {
+        #[command(subcommand)]
+        action: CrawlCommands,
+    },
 
     /// Manage scrape jobs
     Job {
@@ -255,6 +262,55 @@ enum JobCommands {
     Cancel {
         /// Job ID
         #[arg(value_name = "JOB_ID")]
+        id: Uuid,
+    },
+}
+
+#[derive(Subcommand)]
+enum CrawlCommands {
+    /// Start a new crawl session
+    Start {
+        /// Target URL to start crawling from
+        #[arg(short, long)]
+        url: String,
+
+        /// JSON Schema path or name@version (e.g., blog@1.0.0)
+        #[arg(short, long)]
+        schema: String,
+
+        /// Maximum depth for recursion
+        #[arg(short, long, default_value_t = 1)]
+        max_depth: u32,
+
+        /// LLM model to use
+        #[arg(short, long, env = "ARES_MODEL")]
+        model: String,
+
+        /// OpenAI-compatible API base URL
+        #[arg(
+            short,
+            long,
+            env = "ARES_BASE_URL",
+            default_value = "https://api.openai.com/v1"
+        )]
+        base_url: String,
+
+        /// Schema name (defaults to filename without extension)
+        #[arg(long)]
+        schema_name: Option<String>,
+    },
+
+    /// Show status of a crawl session
+    Status {
+        /// Crawl session ID
+        #[arg(value_name = "SESSION_ID")]
+        id: Uuid,
+    },
+
+    /// Show results of a crawl session
+    Results {
+        /// Crawl session ID
+        #[arg(value_name = "SESSION_ID")]
         id: Uuid,
     },
 }
@@ -480,6 +536,100 @@ async fn main() -> Result<()> {
             })
             .await?;
         }
+
+        Commands::Crawl { action } => {
+            let db = Database::connect(&DatabaseConfig::from_env()?).await?;
+            db.migrate().await?;
+
+            match action {
+                CrawlCommands::Start {
+                    url,
+                    schema,
+                    max_depth,
+                    model,
+                    base_url,
+                    schema_name,
+                } => {
+                    let resolved = SchemaResolver::new("schemas").resolve(&schema)?;
+                    validate_schema(&resolved.schema).map_err(|e| anyhow::anyhow!("{e}"))?;
+                    let schema_name = schema_name.unwrap_or(resolved.name);
+                    let schema_value = resolved.schema;
+
+                    let session_id = Uuid::new_v4();
+                    let request = CreateScrapeJobRequest::new(
+                        url,
+                        schema_name,
+                        schema_value,
+                        model,
+                        base_url,
+                    )
+                    .with_crawl_context(session_id, None, 0, max_depth);
+
+                    let job = db.job_repo().create_job(request).await?;
+                    println!("Crawl started!");
+                    println!("Session ID: {}", session_id);
+                    println!("Seed Job:   {}", job.id);
+                }
+
+                CrawlCommands::Status { id } => {
+                    let jobs = db.job_repo().list_jobs_by_session(id).await?;
+                    if jobs.is_empty() {
+                        println!("Crawl session not found or has no jobs.");
+                        return Ok(());
+                    }
+
+                    let total = jobs.len();
+                    let pending = jobs
+                        .iter()
+                        .filter(|j| j.status == JobStatus::Pending)
+                        .count();
+                    let running = jobs
+                        .iter()
+                        .filter(|j| j.status == JobStatus::Running)
+                        .count();
+                    let completed = jobs
+                        .iter()
+                        .filter(|j| j.status == JobStatus::Completed)
+                        .count();
+                    let failed = jobs
+                        .iter()
+                        .filter(|j| j.status == JobStatus::Failed)
+                        .count();
+                    let cancelled = jobs
+                        .iter()
+                        .filter(|j| j.status == JobStatus::Cancelled)
+                        .count();
+
+                    println!("Crawl Session: {}", id);
+                    println!("  Total Jobs:     {}", total);
+                    println!("  Pending:        {}", pending);
+                    println!("  Running:        {}", running);
+                    println!("  Completed:      {}", completed);
+                    println!("  Failed:         {}", failed);
+                    println!("  Cancelled:      {}", cancelled);
+
+                    if total > 0 {
+                        let progress = (completed as f64 / total as f64) * 100.0;
+                        println!("  Progress:       {:.1}%", progress);
+                    }
+                }
+
+                CrawlCommands::Results { id } => {
+                    let extractions = db.extraction_repo().get_by_crawl_session(id).await?;
+                    if extractions.is_empty() {
+                        println!("No results found for this crawl session.");
+                        return Ok(());
+                    }
+
+                    println!("Results for Crawl Session: {}\n", id);
+                    for e in extractions {
+                        println!("--- {} ---", e.url);
+                        println!("{}", serde_json::to_string_pretty(&e.extracted_data)?);
+                        println!();
+                    }
+                }
+            }
+        }
     }
 
     Ok(())
@@ -577,6 +727,7 @@ async fn cmd_worker<F: Fetcher>(fetcher: F, opts: WorkerOpts<'_>) -> Result<()> 
     if let Some(p) = opts.system_prompt {
         extractor_factory = extractor_factory.with_system_prompt(p);
     }
+    let discoverer = HtmlLinkDiscoverer::new();
     let cb = CircuitBreaker::new("llm", CircuitBreakerConfig::default());
 
     let worker = WorkerService::new(
@@ -585,6 +736,7 @@ async fn cmd_worker<F: Fetcher>(fetcher: F, opts: WorkerOpts<'_>) -> Result<()> 
         cleaner,
         extractor_factory,
         extraction_repo,
+        discoverer,
         cb,
         config,
     );

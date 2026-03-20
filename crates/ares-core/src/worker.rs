@@ -3,10 +3,10 @@ use uuid::Uuid;
 
 use crate::circuit_breaker::{CircuitBreaker, CircuitBreakerError};
 use crate::error::AppError;
-use crate::job::{ScrapeJob, WorkerConfig};
+use crate::job::{CreateScrapeJobRequest, ScrapeJob, WorkerConfig};
 use crate::job_queue::JobQueue;
 use crate::scrape::ScrapeService;
-use crate::traits::{Cleaner, ExtractionStore, ExtractorFactory, Fetcher};
+use crate::traits::{Cleaner, ExtractionStore, ExtractorFactory, Fetcher, LinkDiscoverer};
 
 /// Events emitted by the worker for monitoring/logging.
 #[derive(Debug, Clone)]
@@ -93,37 +93,42 @@ impl WorkerReporter for TracingWorkerReporter {
 }
 
 /// Worker that polls the job queue and processes scrape jobs.
-pub struct WorkerService<Q, F, C, EF, S>
+pub struct WorkerService<Q, F, C, EF, S, LD>
 where
     Q: JobQueue,
     F: Fetcher,
     C: Cleaner,
     EF: ExtractorFactory,
     S: ExtractionStore,
+    LD: LinkDiscoverer,
 {
     queue: Q,
     fetcher: F,
     cleaner: C,
     extractor_factory: EF,
     store: S,
+    link_discoverer: LD,
     circuit_breaker: CircuitBreaker,
     config: WorkerConfig,
 }
 
-impl<Q, F, C, EF, S> WorkerService<Q, F, C, EF, S>
+impl<Q, F, C, EF, S, LD> WorkerService<Q, F, C, EF, S, LD>
 where
     Q: JobQueue,
     F: Fetcher,
     C: Cleaner,
     EF: ExtractorFactory,
     S: ExtractionStore,
+    LD: LinkDiscoverer,
 {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         queue: Q,
         fetcher: F,
         cleaner: C,
         extractor_factory: EF,
         store: S,
+        link_discoverer: LD,
         circuit_breaker: CircuitBreaker,
         config: WorkerConfig,
     ) -> Self {
@@ -133,6 +138,7 @@ where
             cleaner,
             extractor_factory,
             store,
+            link_discoverer,
             circuit_breaker,
             config,
         }
@@ -195,7 +201,6 @@ where
     }
 
     /// Process a single job. Public for testing purposes.
-    // TODO(#3): After extraction, discover links and enqueue child jobs for crawling
     pub async fn process_job<WR: WorkerReporter>(&self, job: &ScrapeJob, reporter: &WR) {
         reporter.report(WorkerEvent::JobStarted {
             job_id: job.id,
@@ -249,6 +254,66 @@ where
                     .await
                 {
                     tracing::error!(job_id = %job.id, error = %e, "Failed to mark job completed");
+                }
+
+                // --- SMART CRAWLING (Spidering) ---
+                if let (Some(session_id), Some(html)) = (job.crawl_session_id, scrape_result.raw_html)
+                    && job.depth < job.max_depth
+                {
+                    match self.link_discoverer.discover_links(&html, &job.url) {
+                        Ok(links) => {
+                            for link in links {
+                                // 1. URL Deduplication: skip if already visited in this session
+                                match self.queue.is_url_visited(session_id, &link).await {
+                                    Ok(true) => continue,
+                                    Ok(false) => {
+                                        // 2. Mark as visited immediately to prevent races
+                                        let _ = self
+                                            .queue
+                                            .mark_url_visited(session_id, &link)
+                                            .await;
+
+                                        // 3. Enqueue child job
+                                        let request = CreateScrapeJobRequest::new(
+                                            link,
+                                            &job.schema_name,
+                                            job.schema.clone(),
+                                            &job.model,
+                                            &job.base_url,
+                                        )
+                                        .with_crawl_context(
+                                            session_id,
+                                            Some(job.id),
+                                            job.depth + 1,
+                                            job.max_depth,
+                                        );
+
+                                        if let Err(e) = self.queue.create_job(request).await {
+                                            tracing::error!(
+                                                %session_id,
+                                                error = %e,
+                                                "Failed to create child crawl job"
+                                            );
+                                        }
+                                    }
+                                    Err(e) => {
+                                        tracing::error!(
+                                            %session_id,
+                                            error = %e,
+                                            "Failed to check if URL visited"
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                job_id = %job.id,
+                                error = %e,
+                                "Link discovery failed for crawl job"
+                            );
+                        }
+                    }
                 }
             }
             Err(circuit_err) => {
@@ -320,6 +385,7 @@ mod tests {
             MockCleaner::passthrough(),
             MockExtractorFactory::new(serde_json::json!({"title": "Test"})),
             MockStore::empty(),
+            MockLinkDiscoverer::new(),
             test_cb(),
             test_config(),
         );
@@ -348,6 +414,7 @@ mod tests {
             MockCleaner::passthrough(),
             MockExtractorFactory::new(serde_json::json!({})),
             MockStore::empty(),
+            MockLinkDiscoverer::new(),
             test_cb(),
             test_config(),
         );
@@ -378,6 +445,7 @@ mod tests {
             MockCleaner::with_error(AppError::CleanerError("bad html".into())),
             MockExtractorFactory::new(serde_json::json!({})),
             MockStore::empty(),
+            MockLinkDiscoverer::new(),
             test_cb(),
             test_config(),
         );
@@ -412,6 +480,7 @@ mod tests {
             MockCleaner::passthrough(),
             MockExtractorFactory::new(serde_json::json!({})),
             MockStore::empty(),
+            MockLinkDiscoverer::new(),
             cb,
             test_config(),
         );
@@ -438,6 +507,7 @@ mod tests {
             MockCleaner::passthrough(),
             MockExtractorFactory::with_create_error(AppError::Generic("bad model config".into())),
             MockStore::empty(),
+            MockLinkDiscoverer::new(),
             test_cb(),
             test_config(),
         );
@@ -467,6 +537,7 @@ mod tests {
             MockCleaner::passthrough(),
             MockExtractorFactory::new(serde_json::json!({})),
             MockStore::empty(),
+            MockLinkDiscoverer::new(),
             test_cb(),
             test_config(),
         );
@@ -498,6 +569,7 @@ mod tests {
             MockCleaner::passthrough(),
             MockExtractorFactory::new(serde_json::json!({"title": "Test"})),
             MockStore::empty(),
+            MockLinkDiscoverer::new(),
             test_cb(),
             test_config(),
         );
@@ -531,6 +603,7 @@ mod tests {
             MockCleaner::passthrough(),
             MockExtractorFactory::new(serde_json::json!({})),
             MockStore::empty(),
+            MockLinkDiscoverer::new(),
             test_cb(),
             test_config(),
         );
@@ -557,6 +630,7 @@ mod tests {
             MockCleaner::passthrough(),
             MockExtractorFactory::new(serde_json::json!({})),
             MockStore::empty(),
+            MockLinkDiscoverer::new(),
             test_cb(),
             test_config(),
         );
@@ -591,6 +665,7 @@ mod tests {
             MockCleaner::passthrough(),
             MockExtractorFactory::new(serde_json::json!({"title": "Test"})),
             MockStore::with_save_error(AppError::DatabaseError("disk full".into())),
+            MockLinkDiscoverer::new(),
             test_cb(),
             test_config(),
         );

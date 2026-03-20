@@ -53,6 +53,8 @@ pub struct ScrapeResult {
     pub changed: bool,
     /// The persisted extraction ID (if saved to DB).
     pub extraction_id: Option<Uuid>,
+    /// The raw HTML content (used for link discovery in crawling).
+    pub raw_html: Option<String>,
 }
 
 /// Compute a SHA-256 hash of a string, returned as 64-char hex.
