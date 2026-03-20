@@ -567,7 +567,7 @@ async fn main() -> Result<()> {
 
                     let job = db.job_repo().create_job(request).await?;
                     println!("Crawl started!");
-                    println!("Session ID: {}", session_id);
+                    println!("Session ID: {session_id}");
                     println!("Seed Job:   {}", job.id);
                 }
 
@@ -600,17 +600,17 @@ async fn main() -> Result<()> {
                         .filter(|j| j.status == JobStatus::Cancelled)
                         .count();
 
-                    println!("Crawl Session: {}", id);
-                    println!("  Total Jobs:     {}", total);
-                    println!("  Pending:        {}", pending);
-                    println!("  Running:        {}", running);
-                    println!("  Completed:      {}", completed);
-                    println!("  Failed:         {}", failed);
-                    println!("  Cancelled:      {}", cancelled);
+                    println!("Crawl Session: {id}");
+                    println!("  Total Jobs:     {total}");
+                    println!("  Pending:        {pending}");
+                    println!("  Running:        {running}");
+                    println!("  Completed:      {completed}");
+                    println!("  Failed:         {failed}");
+                    println!("  Cancelled:      {cancelled}");
 
                     if total > 0 {
                         let progress = (completed as f64 / total as f64) * 100.0;
-                        println!("  Progress:       {:.1}%", progress);
+                        println!("  Progress:       {progress:.1}%");
                     }
                 }
 
@@ -621,7 +621,7 @@ async fn main() -> Result<()> {
                         return Ok(());
                     }
 
-                    println!("Results for Crawl Session: {}\n", id);
+                    println!("Results for Crawl Session: {id}\n");
                     for e in extractions {
                         println!("--- {} ---", e.url);
                         println!("{}", serde_json::to_string_pretty(&e.extracted_data)?);
