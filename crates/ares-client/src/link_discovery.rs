@@ -26,6 +26,10 @@ impl LinkDiscoverer for HtmlLinkDiscoverer {
 
         let mut links = Vec::new();
 
+        let mut base_normalized = base.clone();
+        base_normalized.set_fragment(None);
+        let base_str = base_normalized.to_string();
+
         for element in document.select(&selector) {
             if let Some(href) = element.value().attr("href") {
                 // Resolve relative URL
@@ -36,7 +40,12 @@ impl LinkDiscoverer for HtmlLinkDiscoverer {
                             // Strip fragment
                             let mut normalized = full_url;
                             normalized.set_fragment(None);
-                            links.push(normalized.to_string());
+                            let normalized_str = normalized.to_string();
+
+                            // Skip if it is the same as the base URL (ignoring fragment)
+                            if normalized_str != base_str {
+                                links.push(normalized_str);
+                            }
                         }
                     }
                     Err(e) => {

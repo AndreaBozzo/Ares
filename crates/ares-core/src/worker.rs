@@ -257,7 +257,8 @@ where
                 }
 
                 // --- SMART CRAWLING (Spidering) ---
-                if let (Some(session_id), Some(html)) = (job.crawl_session_id, scrape_result.raw_html)
+                if let (Some(session_id), Some(html)) =
+                    (job.crawl_session_id, scrape_result.raw_html)
                     && job.depth < job.max_depth
                 {
                     match self.link_discoverer.discover_links(&html, &job.url) {
@@ -268,10 +269,8 @@ where
                                     Ok(true) => continue,
                                     Ok(false) => {
                                         // 2. Mark as visited immediately to prevent races
-                                        let _ = self
-                                            .queue
-                                            .mark_url_visited(session_id, &link)
-                                            .await;
+                                        let _ =
+                                            self.queue.mark_url_visited(session_id, &link).await;
 
                                         // 3. Enqueue child job
                                         let request = CreateScrapeJobRequest::new(
