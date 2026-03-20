@@ -140,6 +140,12 @@ pub struct ExtractionHistoryResponse {
     pub offset: usize,
 }
 
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct CrawlResultsResponse {
+    pub extractions: Vec<ExtractionResponse>,
+    pub total: usize,
+}
+
 // ---------------------------------------------------------------------------
 // Health
 // ---------------------------------------------------------------------------

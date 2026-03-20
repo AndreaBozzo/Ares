@@ -17,11 +17,11 @@ use ares_core::{NullStore, SchemaResolver, ScrapeService};
 
 use crate::auth::require_api_key;
 use crate::dto::{
-    CrawlRequest, CrawlResponse, CrawlStatusResponse, CreateJobRequest, CreateJobResponse,
-    CreateSchemaRequest, CreateSchemaResponse, ExtractionHistoryQuery, ExtractionHistoryResponse,
-    ExtractionResponse, HealthResponse, JobListResponse, JobResponse, ListJobsQuery,
-    SchemaDetailResponse, SchemaEntryResponse, SchemaListResponse, ScrapeRequest, ScrapeResponse,
-    UpdateSchemaRequest,
+    CrawlRequest, CrawlResponse, CrawlResultsResponse, CrawlStatusResponse, CreateJobRequest,
+    CreateJobResponse, CreateSchemaRequest, CreateSchemaResponse, ExtractionHistoryQuery,
+    ExtractionHistoryResponse, ExtractionResponse, HealthResponse, JobListResponse, JobResponse,
+    ListJobsQuery, SchemaDetailResponse, SchemaEntryResponse, SchemaListResponse, ScrapeRequest,
+    ScrapeResponse, UpdateSchemaRequest,
 };
 use crate::error::ApiError;
 use crate::openapi::ApiDoc;
@@ -588,11 +588,18 @@ pub async fn start_crawl(
     // Default allowed_domains to seed URL's host
     let allowed_domains = match body.allowed_domains {
         Some(ref domains) if !domains.is_empty() => domains.clone(),
-        _ => url::Url::parse(&body.url)
-            .ok()
-            .and_then(|u| u.host_str().map(String::from))
-            .into_iter()
-            .collect(),
+        _ => {
+            let parsed_url = url::Url::parse(&body.url).map_err(|e| {
+                ApiError(ares_core::AppError::SchemaValidationError(format!(
+                    "Invalid crawl seed URL '{}': {e}",
+                    body.url
+                )))
+            })?;
+            parsed_url
+                .host_str()
+                .map(|h| vec![h.to_string()])
+                .unwrap_or_default()
+        }
     };
 
     // Create the seed job
@@ -635,32 +642,33 @@ pub async fn get_crawl_status(
 ) -> Result<impl IntoResponse, ApiError> {
     let repo = state.db.job_repo();
 
-    // This requires adding count methods to the repo for crawl sessions
-    // For now, we can use list_jobs if we add a filter, but let's assume we'll add these to the repo.
-    // Since I already modified the DB to have crawl_session_id, I should add these methods.
+    let counts = repo.count_jobs_by_session(id).await?;
 
-    // TODO: Implement more efficient counting in JobRepository
-    let jobs = repo.list_jobs_by_session(id).await?;
+    let mut pending = 0usize;
+    let mut running = 0usize;
+    let mut completed = 0usize;
+    let mut failed = 0usize;
+    let mut total = 0usize;
+
+    for (status, count) in &counts {
+        let c = *count as usize;
+        total += c;
+        match status.as_str() {
+            "pending" => pending = c,
+            "running" => running = c,
+            "completed" => completed = c,
+            "failed" => failed = c,
+            _ => {}
+        }
+    }
 
     let response = CrawlStatusResponse {
         session_id: id,
-        total_jobs: jobs.len(),
-        pending_jobs: jobs
-            .iter()
-            .filter(|j| j.status == ares_core::job::JobStatus::Pending)
-            .count(),
-        running_jobs: jobs
-            .iter()
-            .filter(|j| j.status == ares_core::job::JobStatus::Running)
-            .count(),
-        completed_jobs: jobs
-            .iter()
-            .filter(|j| j.status == ares_core::job::JobStatus::Completed)
-            .count(),
-        failed_jobs: jobs
-            .iter()
-            .filter(|j| j.status == ares_core::job::JobStatus::Failed)
-            .count(),
+        total_jobs: total,
+        pending_jobs: pending,
+        running_jobs: running,
+        completed_jobs: completed,
+        failed_jobs: failed,
     };
 
     Ok(axum::Json(response))
@@ -673,7 +681,7 @@ pub async fn get_crawl_status(
         ("id" = Uuid, Path, description = "Crawl Session ID")
     ),
     responses(
-        (status = 200, description = "Crawl results", body = ExtractionHistoryResponse),
+        (status = 200, description = "Crawl results", body = CrawlResultsResponse),
         (status = 401, description = "Unauthorized"),
     ),
     security(("bearer" = [])),
@@ -692,12 +700,7 @@ pub async fn get_crawl_results(
         .collect();
     let total = extractions.len();
 
-    let response = ExtractionHistoryResponse {
-        extractions,
-        total,
-        limit: 0,
-        offset: 0,
-    };
+    let response = CrawlResultsResponse { extractions, total };
 
     Ok(axum::Json(response))
 }

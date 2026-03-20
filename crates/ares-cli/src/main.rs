@@ -595,33 +595,30 @@ async fn main() -> Result<()> {
                 }
 
                 CrawlCommands::Status { id } => {
-                    let jobs = db.job_repo().list_jobs_by_session(id).await?;
-                    if jobs.is_empty() {
+                    let counts = db.job_repo().count_jobs_by_session(id).await?;
+                    if counts.is_empty() {
                         println!("Crawl session not found or has no jobs.");
                         return Ok(());
                     }
 
-                    let total = jobs.len();
-                    let pending = jobs
-                        .iter()
-                        .filter(|j| j.status == JobStatus::Pending)
-                        .count();
-                    let running = jobs
-                        .iter()
-                        .filter(|j| j.status == JobStatus::Running)
-                        .count();
-                    let completed = jobs
-                        .iter()
-                        .filter(|j| j.status == JobStatus::Completed)
-                        .count();
-                    let failed = jobs
-                        .iter()
-                        .filter(|j| j.status == JobStatus::Failed)
-                        .count();
-                    let cancelled = jobs
-                        .iter()
-                        .filter(|j| j.status == JobStatus::Cancelled)
-                        .count();
+                    let mut pending: i64 = 0;
+                    let mut running: i64 = 0;
+                    let mut completed: i64 = 0;
+                    let mut failed: i64 = 0;
+                    let mut cancelled: i64 = 0;
+
+                    for (status, count) in &counts {
+                        match status.as_str() {
+                            "pending" => pending = *count,
+                            "running" => running = *count,
+                            "completed" => completed = *count,
+                            "failed" => failed = *count,
+                            "cancelled" => cancelled = *count,
+                            _ => {}
+                        }
+                    }
+
+                    let total = pending + running + completed + failed + cancelled;
 
                     println!("Crawl Session: {id}");
                     println!("  Total Jobs:     {total}");

@@ -313,10 +313,15 @@ where
                                 let Some(domain) = link_domain else {
                                     continue;
                                 };
-                                if !allowed_domains
-                                    .iter()
-                                    .any(|d| domain == *d || domain.ends_with(&format!(".{d}")))
-                                {
+                                if !allowed_domains.iter().any(|d| {
+                                    if domain == *d {
+                                        return true;
+                                    }
+                                    if let Some(prefix) = domain.strip_suffix(d.as_str()) {
+                                        return prefix.ends_with('.');
+                                    }
+                                    false
+                                }) {
                                     continue;
                                 }
 
