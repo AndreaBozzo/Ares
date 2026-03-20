@@ -18,11 +18,11 @@ impl LinkDiscoverer for HtmlLinkDiscoverer {
     fn discover_links(&self, html: &str, base_url: &str) -> Result<Vec<String>, AppError> {
         let document = Html::parse_document(html);
         let selector = Selector::parse("a[href]").map_err(|e| {
-            AppError::Generic(format!("Failed to parse CSS selector for links: {}", e))
+            AppError::Generic(format!("Failed to parse CSS selector for links: {e}"))
         })?;
 
         let base = Url::parse(base_url)
-            .map_err(|e| AppError::Generic(format!("Invalid base URL '{}': {}", base_url, e)))?;
+            .map_err(|e| AppError::Generic(format!("Invalid base URL '{base_url}': {e}")))?;
 
         let mut links = Vec::new();
 
