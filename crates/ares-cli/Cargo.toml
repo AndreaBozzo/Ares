@@ -25,3 +25,4 @@ serde_json.workspace = true
 anyhow.workspace = true
 tokio-util.workspace = true
 uuid.workspace = true
+url.workspace = true

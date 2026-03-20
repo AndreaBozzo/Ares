@@ -13,7 +13,9 @@ use crate::error::AppError;
 use crate::job::{CreateScrapeJobRequest, JobStatus, ScrapeJob};
 use crate::job_queue::JobQueue;
 use crate::models::{Extraction, NewExtraction};
-use crate::traits::{Cleaner, ExtractionStore, Extractor, ExtractorFactory, Fetcher};
+use crate::traits::{
+    Cleaner, ExtractionStore, Extractor, ExtractorFactory, Fetcher, LinkDiscoverer,
+};
 
 // ---------------------------------------------------------------------------
 // MockFetcher
@@ -253,6 +255,71 @@ impl ExtractionStore for MockStore {
 }
 
 // ---------------------------------------------------------------------------
+// MockLinkDiscoverer
+// ---------------------------------------------------------------------------
+
+/// Mock link discoverer that returns a fixed set of links.
+#[derive(Clone, Default)]
+pub struct MockLinkDiscoverer {
+    pub links: Arc<Mutex<Vec<String>>>,
+}
+
+impl MockLinkDiscoverer {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_links(links: Vec<String>) -> Self {
+        Self {
+            links: Arc::new(Mutex::new(links)),
+        }
+    }
+}
+
+impl LinkDiscoverer for MockLinkDiscoverer {
+    fn discover_links(&self, _html: &str, _base_url: &str) -> Result<Vec<String>, AppError> {
+        Ok(self.links.lock().unwrap().clone())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// MockRobotsChecker
+// ---------------------------------------------------------------------------
+
+/// Mock robots.txt checker that allows all URLs by default.
+#[derive(Clone)]
+pub struct MockRobotsChecker {
+    pub blocked_urls: Arc<Mutex<Vec<String>>>,
+}
+
+impl MockRobotsChecker {
+    pub fn new() -> Self {
+        Self {
+            blocked_urls: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+
+    pub fn with_blocked(urls: Vec<String>) -> Self {
+        Self {
+            blocked_urls: Arc::new(Mutex::new(urls)),
+        }
+    }
+}
+
+impl Default for MockRobotsChecker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl crate::traits::RobotsChecker for MockRobotsChecker {
+    async fn is_allowed(&self, url: &str) -> bool {
+        let blocked = self.blocked_urls.lock().unwrap();
+        !blocked.iter().any(|b| url.contains(b))
+    }
+}
+
+// ---------------------------------------------------------------------------
 // MockJobQueue
 // ---------------------------------------------------------------------------
 
@@ -265,11 +332,12 @@ pub type CompletedJobRecord = (Uuid, Option<Uuid>);
 /// Mock job queue backed by an in-memory Vec.
 #[derive(Clone)]
 pub struct MockJobQueue {
-    jobs: Arc<Mutex<Vec<ScrapeJob>>>,
+    pub jobs: Arc<Mutex<Vec<ScrapeJob>>>,
     claim_error: Arc<Mutex<Option<AppError>>>,
     pub failed_jobs: Arc<Mutex<Vec<FailedJobRecord>>>,
     pub completed_jobs: Arc<Mutex<Vec<CompletedJobRecord>>>,
     pub released_workers: Arc<Mutex<Vec<String>>>,
+    pub visited_urls: Arc<Mutex<Vec<(Uuid, String)>>>,
 }
 
 impl MockJobQueue {
@@ -280,6 +348,7 @@ impl MockJobQueue {
             failed_jobs: Arc::new(Mutex::new(Vec::new())),
             completed_jobs: Arc::new(Mutex::new(Vec::new())),
             released_workers: Arc::new(Mutex::new(Vec::new())),
+            visited_urls: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
@@ -291,6 +360,7 @@ impl MockJobQueue {
             failed_jobs: Arc::new(Mutex::new(Vec::new())),
             completed_jobs: Arc::new(Mutex::new(Vec::new())),
             released_workers: Arc::new(Mutex::new(Vec::new())),
+            visited_urls: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
@@ -301,6 +371,7 @@ impl MockJobQueue {
             failed_jobs: Arc::new(Mutex::new(Vec::new())),
             completed_jobs: Arc::new(Mutex::new(Vec::new())),
             released_workers: Arc::new(Mutex::new(Vec::new())),
+            visited_urls: Arc::new(Mutex::new(Vec::new())),
         }
     }
 }
@@ -325,6 +396,12 @@ impl JobQueue for MockJobQueue {
             error_message: None,
             extraction_id: None,
             worker_id: None,
+            crawl_session_id: request.crawl_session_id,
+            parent_job_id: request.parent_job_id,
+            depth: request.depth,
+            max_depth: request.max_depth,
+            max_pages: request.max_pages,
+            allowed_domains: request.allowed_domains,
         };
         self.jobs.lock().unwrap().push(job.clone());
         Ok(job)
@@ -472,6 +549,21 @@ impl JobQueue for MockJobQueue {
         let jobs = self.jobs.lock().unwrap();
         Ok(jobs.iter().filter(|j| j.status == status).count() as i64)
     }
+
+    async fn mark_url_visited(&self, session_id: Uuid, url: &str) -> Result<bool, AppError> {
+        let mut visited = self.visited_urls.lock().unwrap();
+        if visited.iter().any(|(s, u)| *s == session_id && u == url) {
+            Ok(false)
+        } else {
+            visited.push((session_id, url.to_string()));
+            Ok(true)
+        }
+    }
+
+    async fn count_visited_urls(&self, session_id: Uuid) -> Result<i64, AppError> {
+        let visited = self.visited_urls.lock().unwrap();
+        Ok(visited.iter().filter(|(s, _)| *s == session_id).count() as i64)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -530,6 +622,12 @@ pub fn make_test_job() -> ScrapeJob {
         error_message: None,
         extraction_id: None,
         worker_id: None,
+        crawl_session_id: None,
+        parent_job_id: None,
+        depth: 0,
+        max_depth: 0,
+        max_pages: 100,
+        allowed_domains: Vec::new(),
     }
 }
 

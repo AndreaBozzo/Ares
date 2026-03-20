@@ -17,10 +17,11 @@ use ares_core::{NullStore, SchemaResolver, ScrapeService};
 
 use crate::auth::require_api_key;
 use crate::dto::{
-    CreateJobRequest, CreateJobResponse, CreateSchemaRequest, CreateSchemaResponse,
-    ExtractionHistoryQuery, ExtractionHistoryResponse, ExtractionResponse, HealthResponse,
-    JobListResponse, JobResponse, ListJobsQuery, SchemaDetailResponse, SchemaEntryResponse,
-    SchemaListResponse, ScrapeRequest, ScrapeResponse, UpdateSchemaRequest,
+    CrawlRequest, CrawlResponse, CrawlResultsResponse, CrawlStatusResponse, CreateJobRequest,
+    CreateJobResponse, CreateSchemaRequest, CreateSchemaResponse, ExtractionHistoryQuery,
+    ExtractionHistoryResponse, ExtractionResponse, HealthResponse, JobListResponse, JobResponse,
+    ListJobsQuery, SchemaDetailResponse, SchemaEntryResponse, SchemaListResponse, ScrapeRequest,
+    ScrapeResponse, UpdateSchemaRequest,
 };
 use crate::error::ApiError;
 use crate::openapi::ApiDoc;
@@ -35,6 +36,9 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/jobs/{id}", get(get_job))
         .route("/v1/jobs/{id}", delete(cancel_job))
         .route("/v1/jobs/{id}/retry", post(retry_job))
+        .route("/v1/crawl", post(start_crawl))
+        .route("/v1/crawl/{id}", get(get_crawl_status))
+        .route("/v1/crawl/{id}/results", get(get_crawl_results))
         .route("/v1/extractions", get(get_extractions))
         .route("/v1/schemas", get(list_schemas))
         .route("/v1/schemas", post(create_schema))
@@ -555,6 +559,150 @@ pub async fn delete_schema_version(
         }
         Err(e) => Err(ApiError::from(e)),
     }
+}
+
+// ---------------------------------------------------------------------------
+// Crawl
+// ---------------------------------------------------------------------------
+
+#[utoipa::path(
+    post,
+    path = "/v1/crawl",
+    request_body = CrawlRequest,
+    responses(
+        (status = 202, description = "Crawl started", body = CrawlResponse),
+        (status = 401, description = "Unauthorized"),
+    ),
+    security(("bearer" = [])),
+    tag = "crawl"
+)]
+pub async fn start_crawl(
+    State(state): State<Arc<AppState>>,
+    axum::Json(body): axum::Json<CrawlRequest>,
+) -> Result<impl IntoResponse, ApiError> {
+    // Validate schema
+    ares_core::validate_schema(&body.schema)?;
+
+    let session_id = Uuid::new_v4();
+
+    // Default allowed_domains to seed URL's host
+    let allowed_domains = match body.allowed_domains {
+        Some(ref domains) if !domains.is_empty() => domains.clone(),
+        _ => {
+            let parsed_url = url::Url::parse(&body.url).map_err(|e| {
+                ApiError(ares_core::AppError::SchemaValidationError(format!(
+                    "Invalid crawl seed URL '{}': {e}",
+                    body.url
+                )))
+            })?;
+            parsed_url
+                .host_str()
+                .map(|h| vec![h.to_string()])
+                .unwrap_or_default()
+        }
+    };
+
+    // Create the seed job
+    let request = CreateScrapeJobRequest::new(
+        body.url,
+        body.schema_name,
+        body.schema,
+        body.model,
+        body.base_url,
+    )
+    .with_crawl_context(session_id, None, 0, body.max_depth)
+    .with_crawl_config(body.max_pages.unwrap_or(100), allowed_domains);
+
+    let job = state.db.job_repo().create_job(request).await?;
+
+    let response = CrawlResponse {
+        session_id,
+        status: job.status.to_string(),
+    };
+
+    Ok((StatusCode::ACCEPTED, axum::Json(response)))
+}
+
+#[utoipa::path(
+    get,
+    path = "/v1/crawl/{id}",
+    params(
+        ("id" = Uuid, Path, description = "Crawl Session ID")
+    ),
+    responses(
+        (status = 200, description = "Crawl status", body = CrawlStatusResponse),
+        (status = 401, description = "Unauthorized"),
+    ),
+    security(("bearer" = [])),
+    tag = "crawl"
+)]
+pub async fn get_crawl_status(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+) -> Result<impl IntoResponse, ApiError> {
+    let repo = state.db.job_repo();
+
+    let counts = repo.count_jobs_by_session(id).await?;
+
+    let mut pending = 0usize;
+    let mut running = 0usize;
+    let mut completed = 0usize;
+    let mut failed = 0usize;
+    let mut total = 0usize;
+
+    for (status, count) in &counts {
+        let c = *count as usize;
+        total += c;
+        match status.as_str() {
+            "pending" => pending = c,
+            "running" => running = c,
+            "completed" => completed = c,
+            "failed" => failed = c,
+            _ => {}
+        }
+    }
+
+    let response = CrawlStatusResponse {
+        session_id: id,
+        total_jobs: total,
+        pending_jobs: pending,
+        running_jobs: running,
+        completed_jobs: completed,
+        failed_jobs: failed,
+    };
+
+    Ok(axum::Json(response))
+}
+
+#[utoipa::path(
+    get,
+    path = "/v1/crawl/{id}/results",
+    params(
+        ("id" = Uuid, Path, description = "Crawl Session ID")
+    ),
+    responses(
+        (status = 200, description = "Crawl results", body = CrawlResultsResponse),
+        (status = 401, description = "Unauthorized"),
+    ),
+    security(("bearer" = [])),
+    tag = "crawl"
+)]
+pub async fn get_crawl_results(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+) -> Result<impl IntoResponse, ApiError> {
+    // This helper method would find all extractions associated with jobs in this crawl session
+    let extractions = state.db.extraction_repo().get_by_crawl_session(id).await?;
+
+    let extractions: Vec<ExtractionResponse> = extractions
+        .into_iter()
+        .map(ExtractionResponse::from)
+        .collect();
+    let total = extractions.len();
+
+    let response = CrawlResultsResponse { extractions, total };
+
+    Ok(axum::Json(response))
 }
 
 // ---------------------------------------------------------------------------

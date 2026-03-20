@@ -1,12 +1,15 @@
 use tokio_util::sync::CancellationToken;
+use url::Url;
 use uuid::Uuid;
 
 use crate::circuit_breaker::{CircuitBreaker, CircuitBreakerError};
 use crate::error::AppError;
-use crate::job::{ScrapeJob, WorkerConfig};
+use crate::job::{CreateScrapeJobRequest, ScrapeJob, WorkerConfig};
 use crate::job_queue::JobQueue;
 use crate::scrape::ScrapeService;
-use crate::traits::{Cleaner, ExtractionStore, ExtractorFactory, Fetcher};
+use crate::traits::{
+    Cleaner, ExtractionStore, ExtractorFactory, Fetcher, LinkDiscoverer, RobotsChecker,
+};
 
 /// Events emitted by the worker for monitoring/logging.
 #[derive(Debug, Clone)]
@@ -93,37 +96,46 @@ impl WorkerReporter for TracingWorkerReporter {
 }
 
 /// Worker that polls the job queue and processes scrape jobs.
-pub struct WorkerService<Q, F, C, EF, S>
+pub struct WorkerService<Q, F, C, EF, S, LD, RC>
 where
     Q: JobQueue,
     F: Fetcher,
     C: Cleaner,
     EF: ExtractorFactory,
     S: ExtractionStore,
+    LD: LinkDiscoverer,
+    RC: RobotsChecker,
 {
     queue: Q,
     fetcher: F,
     cleaner: C,
     extractor_factory: EF,
     store: S,
+    link_discoverer: LD,
+    robots_checker: RC,
     circuit_breaker: CircuitBreaker,
     config: WorkerConfig,
 }
 
-impl<Q, F, C, EF, S> WorkerService<Q, F, C, EF, S>
+impl<Q, F, C, EF, S, LD, RC> WorkerService<Q, F, C, EF, S, LD, RC>
 where
     Q: JobQueue,
     F: Fetcher,
     C: Cleaner,
     EF: ExtractorFactory,
     S: ExtractionStore,
+    LD: LinkDiscoverer,
+    RC: RobotsChecker,
 {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         queue: Q,
         fetcher: F,
         cleaner: C,
         extractor_factory: EF,
         store: S,
+        link_discoverer: LD,
+        robots_checker: RC,
         circuit_breaker: CircuitBreaker,
         config: WorkerConfig,
     ) -> Self {
@@ -133,6 +145,8 @@ where
             cleaner,
             extractor_factory,
             store,
+            link_discoverer,
+            robots_checker,
             circuit_breaker,
             config,
         }
@@ -195,7 +209,6 @@ where
     }
 
     /// Process a single job. Public for testing purposes.
-    // TODO(#3): After extraction, discover links and enqueue child jobs for crawling
     pub async fn process_job<WR: WorkerReporter>(&self, job: &ScrapeJob, reporter: &WR) {
         reporter.report(WorkerEvent::JobStarted {
             job_id: job.id,
@@ -249,6 +262,129 @@ where
                     .await
                 {
                     tracing::error!(job_id = %job.id, error = %e, "Failed to mark job completed");
+                }
+
+                // --- SMART CRAWLING (Spidering) ---
+                if let (Some(session_id), Some(html)) =
+                    (job.crawl_session_id, scrape_result.raw_html)
+                    && job.depth < job.max_depth
+                {
+                    match self.link_discoverer.discover_links(&html, &job.url) {
+                        Ok(links) => {
+                            // Determine allowed domains (default to seed URL's domain)
+                            let allowed_domains = if job.allowed_domains.is_empty() {
+                                Url::parse(&job.url)
+                                    .ok()
+                                    .and_then(|u| u.host_str().map(String::from))
+                                    .into_iter()
+                                    .collect::<Vec<_>>()
+                            } else {
+                                job.allowed_domains.clone()
+                            };
+
+                            // Count visited URLs once, track locally for max_pages
+                            let mut visited_count = match self
+                                .queue
+                                .count_visited_urls(session_id)
+                                .await
+                            {
+                                Ok(c) => c,
+                                Err(e) => {
+                                    tracing::error!(%session_id, error = %e, "Failed to count visited URLs");
+                                    0
+                                }
+                            };
+
+                            for link in links {
+                                // 1. Max pages check
+                                if visited_count >= job.max_pages as i64 {
+                                    tracing::info!(
+                                        %session_id,
+                                        max_pages = job.max_pages,
+                                        "Crawl reached max_pages limit"
+                                    );
+                                    break;
+                                }
+
+                                // 2. Domain filter
+                                let link_domain = Url::parse(&link)
+                                    .ok()
+                                    .and_then(|u| u.host_str().map(String::from));
+                                let Some(domain) = link_domain else {
+                                    continue;
+                                };
+                                if !allowed_domains.iter().any(|d| {
+                                    if domain == *d {
+                                        return true;
+                                    }
+                                    if let Some(prefix) = domain.strip_suffix(d.as_str()) {
+                                        return prefix.ends_with('.');
+                                    }
+                                    false
+                                }) {
+                                    continue;
+                                }
+
+                                // 3. robots.txt check
+                                if !self.robots_checker.is_allowed(&link).await {
+                                    tracing::debug!(
+                                        url = %link,
+                                        "Skipping URL disallowed by robots.txt"
+                                    );
+                                    continue;
+                                }
+
+                                // 4. Atomic dedup: mark visited, skip if already seen
+                                match self.queue.mark_url_visited(session_id, &link).await {
+                                    Ok(true) => {
+                                        visited_count += 1;
+
+                                        // 4. Enqueue child job
+                                        let request = CreateScrapeJobRequest::new(
+                                            link,
+                                            &job.schema_name,
+                                            job.schema.clone(),
+                                            &job.model,
+                                            &job.base_url,
+                                        )
+                                        .with_crawl_context(
+                                            session_id,
+                                            Some(job.id),
+                                            job.depth + 1,
+                                            job.max_depth,
+                                        )
+                                        .with_crawl_config(
+                                            job.max_pages,
+                                            job.allowed_domains.clone(),
+                                        );
+
+                                        if let Err(e) = self.queue.create_job(request).await {
+                                            tracing::error!(
+                                                %session_id,
+                                                error = %e,
+                                                "Failed to create child crawl job"
+                                            );
+                                        }
+                                    }
+                                    Ok(false) => continue, // Already visited
+                                    Err(e) => {
+                                        tracing::error!(
+                                            %session_id,
+                                            error = %e,
+                                            "Failed to mark URL visited"
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                job_id = %job.id,
+                                error = %e,
+                                "Link discovery failed for crawl job"
+                            );
+                        }
+                    }
                 }
             }
             Err(circuit_err) => {
@@ -320,6 +456,8 @@ mod tests {
             MockCleaner::passthrough(),
             MockExtractorFactory::new(serde_json::json!({"title": "Test"})),
             MockStore::empty(),
+            MockLinkDiscoverer::new(),
+            MockRobotsChecker::new(),
             test_cb(),
             test_config(),
         );
@@ -348,6 +486,8 @@ mod tests {
             MockCleaner::passthrough(),
             MockExtractorFactory::new(serde_json::json!({})),
             MockStore::empty(),
+            MockLinkDiscoverer::new(),
+            MockRobotsChecker::new(),
             test_cb(),
             test_config(),
         );
@@ -378,6 +518,8 @@ mod tests {
             MockCleaner::with_error(AppError::CleanerError("bad html".into())),
             MockExtractorFactory::new(serde_json::json!({})),
             MockStore::empty(),
+            MockLinkDiscoverer::new(),
+            MockRobotsChecker::new(),
             test_cb(),
             test_config(),
         );
@@ -412,6 +554,8 @@ mod tests {
             MockCleaner::passthrough(),
             MockExtractorFactory::new(serde_json::json!({})),
             MockStore::empty(),
+            MockLinkDiscoverer::new(),
+            MockRobotsChecker::new(),
             cb,
             test_config(),
         );
@@ -438,6 +582,8 @@ mod tests {
             MockCleaner::passthrough(),
             MockExtractorFactory::with_create_error(AppError::Generic("bad model config".into())),
             MockStore::empty(),
+            MockLinkDiscoverer::new(),
+            MockRobotsChecker::new(),
             test_cb(),
             test_config(),
         );
@@ -467,6 +613,8 @@ mod tests {
             MockCleaner::passthrough(),
             MockExtractorFactory::new(serde_json::json!({})),
             MockStore::empty(),
+            MockLinkDiscoverer::new(),
+            MockRobotsChecker::new(),
             test_cb(),
             test_config(),
         );
@@ -498,6 +646,8 @@ mod tests {
             MockCleaner::passthrough(),
             MockExtractorFactory::new(serde_json::json!({"title": "Test"})),
             MockStore::empty(),
+            MockLinkDiscoverer::new(),
+            MockRobotsChecker::new(),
             test_cb(),
             test_config(),
         );
@@ -531,6 +681,8 @@ mod tests {
             MockCleaner::passthrough(),
             MockExtractorFactory::new(serde_json::json!({})),
             MockStore::empty(),
+            MockLinkDiscoverer::new(),
+            MockRobotsChecker::new(),
             test_cb(),
             test_config(),
         );
@@ -557,6 +709,8 @@ mod tests {
             MockCleaner::passthrough(),
             MockExtractorFactory::new(serde_json::json!({})),
             MockStore::empty(),
+            MockLinkDiscoverer::new(),
+            MockRobotsChecker::new(),
             test_cb(),
             test_config(),
         );
@@ -591,6 +745,8 @@ mod tests {
             MockCleaner::passthrough(),
             MockExtractorFactory::new(serde_json::json!({"title": "Test"})),
             MockStore::with_save_error(AppError::DatabaseError("disk full".into())),
+            MockLinkDiscoverer::new(),
+            MockRobotsChecker::new(),
             test_cb(),
             test_config(),
         );
@@ -600,5 +756,270 @@ mod tests {
         let failed = queue.failed_jobs.lock().unwrap();
         assert_eq!(failed.len(), 1);
         assert!(failed[0].1.contains("disk full"));
+    }
+
+    // --- Crawl-specific tests ---
+
+    fn make_crawl_job(
+        session_id: Uuid,
+        depth: u32,
+        max_depth: u32,
+        max_pages: u32,
+        allowed_domains: Vec<String>,
+    ) -> ScrapeJob {
+        let mut job = make_test_job();
+        job.crawl_session_id = Some(session_id);
+        job.depth = depth;
+        job.max_depth = max_depth;
+        job.max_pages = max_pages;
+        job.allowed_domains = allowed_domains;
+        job
+    }
+
+    #[tokio::test]
+    async fn crawl_job_enqueues_child_jobs() {
+        let session_id = Uuid::new_v4();
+        let job = make_crawl_job(session_id, 0, 2, 100, vec!["example.com".to_string()]);
+        let queue = MockJobQueue::with_job(job.clone());
+        let reporter = MockReporter::new();
+
+        let worker = WorkerService::new(
+            queue.clone(),
+            MockFetcher::new("<html><a href='/page1'>1</a></html>"),
+            MockCleaner::passthrough(),
+            MockExtractorFactory::new(serde_json::json!({"title": "Test"})),
+            MockStore::empty(),
+            MockLinkDiscoverer::with_links(vec![
+                "https://example.com/page1".to_string(),
+                "https://example.com/page2".to_string(),
+            ]),
+            MockRobotsChecker::new(),
+            test_cb(),
+            test_config(),
+        );
+
+        worker.process_job(&job, &reporter).await;
+
+        // Original job completed + 2 child jobs created
+        let jobs = queue.jobs.lock().unwrap();
+        let child_jobs: Vec<_> = jobs
+            .iter()
+            .filter(|j| j.parent_job_id == Some(job.id))
+            .collect();
+        assert_eq!(child_jobs.len(), 2);
+        assert_eq!(child_jobs[0].depth, 1);
+        assert_eq!(child_jobs[0].max_depth, 2);
+        assert_eq!(child_jobs[0].crawl_session_id, Some(session_id));
+    }
+
+    #[tokio::test]
+    async fn crawl_job_filters_external_domains() {
+        let session_id = Uuid::new_v4();
+        let job = make_crawl_job(session_id, 0, 2, 100, vec!["example.com".to_string()]);
+        let queue = MockJobQueue::with_job(job.clone());
+        let reporter = MockReporter::new();
+
+        let worker = WorkerService::new(
+            queue.clone(),
+            MockFetcher::new("<html>hi</html>"),
+            MockCleaner::passthrough(),
+            MockExtractorFactory::new(serde_json::json!({"title": "Test"})),
+            MockStore::empty(),
+            MockLinkDiscoverer::with_links(vec![
+                "https://example.com/page1".to_string(),
+                "https://other.com/page2".to_string(),
+                "https://sub.example.com/page3".to_string(),
+            ]),
+            MockRobotsChecker::new(),
+            test_cb(),
+            test_config(),
+        );
+
+        worker.process_job(&job, &reporter).await;
+
+        let jobs = queue.jobs.lock().unwrap();
+        let child_jobs: Vec<_> = jobs
+            .iter()
+            .filter(|j| j.parent_job_id == Some(job.id))
+            .collect();
+        // example.com/page1 and sub.example.com/page3 allowed; other.com filtered
+        assert_eq!(child_jobs.len(), 2);
+        let urls: Vec<_> = child_jobs.iter().map(|j| j.url.as_str()).collect();
+        assert!(urls.contains(&"https://example.com/page1"));
+        assert!(urls.contains(&"https://sub.example.com/page3"));
+    }
+
+    #[tokio::test]
+    async fn crawl_job_respects_max_depth() {
+        let session_id = Uuid::new_v4();
+        // depth == max_depth, so no children should be created
+        let job = make_crawl_job(session_id, 2, 2, 100, vec!["example.com".to_string()]);
+        let queue = MockJobQueue::with_job(job.clone());
+        let reporter = MockReporter::new();
+
+        let worker = WorkerService::new(
+            queue.clone(),
+            MockFetcher::new("<html>hi</html>"),
+            MockCleaner::passthrough(),
+            MockExtractorFactory::new(serde_json::json!({"title": "Test"})),
+            MockStore::empty(),
+            MockLinkDiscoverer::with_links(vec!["https://example.com/page1".to_string()]),
+            MockRobotsChecker::new(),
+            test_cb(),
+            test_config(),
+        );
+
+        worker.process_job(&job, &reporter).await;
+
+        let jobs = queue.jobs.lock().unwrap();
+        let child_jobs: Vec<_> = jobs
+            .iter()
+            .filter(|j| j.parent_job_id == Some(job.id))
+            .collect();
+        assert_eq!(child_jobs.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn crawl_job_deduplicates_urls() {
+        let session_id = Uuid::new_v4();
+        let job = make_crawl_job(session_id, 0, 2, 100, vec!["example.com".to_string()]);
+        let queue = MockJobQueue::with_job(job.clone());
+        // Pre-populate visited URL
+        queue
+            .visited_urls
+            .lock()
+            .unwrap()
+            .push((session_id, "https://example.com/page1".to_string()));
+        let reporter = MockReporter::new();
+
+        let worker = WorkerService::new(
+            queue.clone(),
+            MockFetcher::new("<html>hi</html>"),
+            MockCleaner::passthrough(),
+            MockExtractorFactory::new(serde_json::json!({"title": "Test"})),
+            MockStore::empty(),
+            MockLinkDiscoverer::with_links(vec![
+                "https://example.com/page1".to_string(), // already visited
+                "https://example.com/page2".to_string(), // new
+            ]),
+            MockRobotsChecker::new(),
+            test_cb(),
+            test_config(),
+        );
+
+        worker.process_job(&job, &reporter).await;
+
+        let jobs = queue.jobs.lock().unwrap();
+        let child_jobs: Vec<_> = jobs
+            .iter()
+            .filter(|j| j.parent_job_id == Some(job.id))
+            .collect();
+        // Only page2 should be enqueued
+        assert_eq!(child_jobs.len(), 1);
+        assert_eq!(child_jobs[0].url, "https://example.com/page2");
+    }
+
+    #[tokio::test]
+    async fn crawl_job_respects_max_pages() {
+        let session_id = Uuid::new_v4();
+        let job = make_crawl_job(
+            session_id,
+            0,
+            2,
+            2, // max 2 pages
+            vec!["example.com".to_string()],
+        );
+        let queue = MockJobQueue::with_job(job.clone());
+        // Pre-populate 2 visited URLs (at max already)
+        {
+            let mut visited = queue.visited_urls.lock().unwrap();
+            visited.push((session_id, "https://example.com/seed".to_string()));
+            visited.push((session_id, "https://example.com/page0".to_string()));
+        }
+        let reporter = MockReporter::new();
+
+        let worker = WorkerService::new(
+            queue.clone(),
+            MockFetcher::new("<html>hi</html>"),
+            MockCleaner::passthrough(),
+            MockExtractorFactory::new(serde_json::json!({"title": "Test"})),
+            MockStore::empty(),
+            MockLinkDiscoverer::with_links(vec![
+                "https://example.com/page1".to_string(),
+                "https://example.com/page2".to_string(),
+            ]),
+            MockRobotsChecker::new(),
+            test_cb(),
+            test_config(),
+        );
+
+        worker.process_job(&job, &reporter).await;
+
+        let jobs = queue.jobs.lock().unwrap();
+        let child_jobs: Vec<_> = jobs
+            .iter()
+            .filter(|j| j.parent_job_id == Some(job.id))
+            .collect();
+        assert_eq!(child_jobs.len(), 0, "Should not enqueue when at max_pages");
+    }
+
+    #[tokio::test]
+    async fn non_crawl_job_skips_link_discovery() {
+        let job = make_test_job(); // no crawl_session_id
+        let queue = MockJobQueue::with_job(job.clone());
+        let reporter = MockReporter::new();
+
+        let worker = WorkerService::new(
+            queue.clone(),
+            MockFetcher::new("<html><a href='/page1'>1</a></html>"),
+            MockCleaner::passthrough(),
+            MockExtractorFactory::new(serde_json::json!({"title": "Test"})),
+            MockStore::empty(),
+            MockLinkDiscoverer::with_links(vec!["https://example.com/page1".to_string()]),
+            MockRobotsChecker::new(),
+            test_cb(),
+            test_config(),
+        );
+
+        worker.process_job(&job, &reporter).await;
+
+        let jobs = queue.jobs.lock().unwrap();
+        // Only the original job, no children
+        assert_eq!(jobs.len(), 1);
+        assert!(jobs[0].parent_job_id.is_none());
+    }
+
+    #[tokio::test]
+    async fn crawl_job_respects_robots_txt() {
+        let session_id = Uuid::new_v4();
+        let job = make_crawl_job(session_id, 0, 2, 100, vec!["example.com".to_string()]);
+        let queue = MockJobQueue::with_job(job.clone());
+        let reporter = MockReporter::new();
+
+        let worker = WorkerService::new(
+            queue.clone(),
+            MockFetcher::new("<html>hi</html>"),
+            MockCleaner::passthrough(),
+            MockExtractorFactory::new(serde_json::json!({"title": "Test"})),
+            MockStore::empty(),
+            MockLinkDiscoverer::with_links(vec![
+                "https://example.com/public".to_string(),
+                "https://example.com/admin/secret".to_string(),
+            ]),
+            MockRobotsChecker::with_blocked(vec!["/admin".to_string()]),
+            test_cb(),
+            test_config(),
+        );
+
+        worker.process_job(&job, &reporter).await;
+
+        let jobs = queue.jobs.lock().unwrap();
+        let child_jobs: Vec<_> = jobs
+            .iter()
+            .filter(|j| j.parent_job_id == Some(job.id))
+            .collect();
+        // Only /public should be enqueued, /admin/secret blocked by robots.txt
+        assert_eq!(child_jobs.len(), 1);
+        assert_eq!(child_jobs[0].url, "https://example.com/public");
     }
 }

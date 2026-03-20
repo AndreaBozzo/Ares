@@ -49,6 +49,26 @@ const MIGRATIONS: &[&str] = &[
     r#"CREATE INDEX IF NOT EXISTS idx_scrape_jobs_worker ON scrape_jobs(worker_id) WHERE status = 'running'"#,
     r#"CREATE INDEX IF NOT EXISTS idx_scrape_jobs_status ON scrape_jobs(status, created_at DESC)"#,
     r#"CREATE INDEX IF NOT EXISTS idx_scrape_jobs_url ON scrape_jobs(url, created_at DESC)"#,
+    // 003_crawl_support.sql
+    r#"ALTER TABLE scrape_jobs
+       ADD COLUMN IF NOT EXISTS crawl_session_id UUID,
+       ADD COLUMN IF NOT EXISTS parent_job_id UUID REFERENCES scrape_jobs(id),
+       ADD COLUMN IF NOT EXISTS depth INTEGER NOT NULL DEFAULT 0,
+       ADD COLUMN IF NOT EXISTS max_depth INTEGER NOT NULL DEFAULT 0"#,
+    r#"CREATE TABLE IF NOT EXISTS crawl_visited_urls (
+        session_id UUID NOT NULL,
+        url_hash VARCHAR(64) NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (session_id, url_hash)
+    )"#,
+    r#"CREATE INDEX IF NOT EXISTS idx_scrape_jobs_crawl_session
+       ON scrape_jobs(crawl_session_id, created_at DESC)"#,
+    r#"CREATE INDEX IF NOT EXISTS idx_scrape_jobs_parent
+       ON scrape_jobs(parent_job_id)"#,
+    // 003_crawl_support.sql (crawl config columns)
+    r#"ALTER TABLE scrape_jobs
+       ADD COLUMN IF NOT EXISTS max_pages INTEGER NOT NULL DEFAULT 100,
+       ADD COLUMN IF NOT EXISTS allowed_domains JSONB NOT NULL DEFAULT '[]'"#,
 ];
 
 /// Spins up a PostgreSQL container and returns a connected pool.

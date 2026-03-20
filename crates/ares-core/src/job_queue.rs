@@ -73,4 +73,19 @@ pub trait JobQueue: Send + Sync + Clone {
         &self,
         status: JobStatus,
     ) -> impl Future<Output = Result<i64, AppError>> + Send;
+
+    /// Atomically mark a URL as visited in a crawl session.
+    ///
+    /// Returns `true` if the URL was newly inserted, `false` if it was already visited.
+    fn mark_url_visited(
+        &self,
+        session_id: Uuid,
+        url: &str,
+    ) -> impl Future<Output = Result<bool, AppError>> + Send;
+
+    /// Count the number of visited URLs in a crawl session.
+    fn count_visited_urls(
+        &self,
+        session_id: Uuid,
+    ) -> impl Future<Output = Result<i64, AppError>> + Send;
 }

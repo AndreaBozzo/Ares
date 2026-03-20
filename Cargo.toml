@@ -76,6 +76,9 @@ jsonschema = { version = "0.45", default-features = false }
 # URL
 url = "2"
 
+# robots.txt
+robotstxt = "0.3"
+
 # Security
 subtle = "2"
 

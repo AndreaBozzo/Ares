@@ -20,6 +20,9 @@ use utoipa::OpenApi;
         crate::routes::create_schema,
         crate::routes::update_schema_version,
         crate::routes::delete_schema_version,
+        crate::routes::start_crawl,
+        crate::routes::get_crawl_status,
+        crate::routes::get_crawl_results,
         crate::routes::health,
     ),
     components(schemas(
@@ -39,12 +42,16 @@ use utoipa::OpenApi;
         crate::dto::UpdateSchemaRequest,
         crate::dto::HealthResponse,
         crate::dto::ErrorResponse,
+        crate::dto::CrawlRequest,
+        crate::dto::CrawlResponse,
+        crate::dto::CrawlStatusResponse,
     )),
     tags(
         (name = "scrape", description = "One-shot data extraction"),
         (name = "jobs", description = "Scrape job management"),
         (name = "extractions", description = "Extraction history"),
         (name = "schemas", description = "Schema management"),
+        (name = "crawl", description = "Recursive crawl management"),
         (name = "system", description = "Health and system status"),
     ),
     modifiers(&SecurityAddon)

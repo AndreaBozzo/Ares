@@ -42,6 +42,9 @@ chrono.workspace = true
 # Security
 subtle.workspace = true
 
+# URL parsing
+url.workspace = true
+
 # Env
 dotenvy.workspace = true
 
