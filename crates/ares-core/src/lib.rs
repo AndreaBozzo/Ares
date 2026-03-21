@@ -1,5 +1,6 @@
 //! Core library for Ares — traits, pipeline logic, job scheduling, and error types.
 
+pub mod cache;
 pub mod circuit_breaker;
 pub mod crawl;
 pub mod error;
@@ -15,6 +16,7 @@ pub mod worker;
 #[cfg(test)]
 pub mod testutil;
 
+pub use cache::{CacheConfig, ContentCache, ExtractionCache};
 pub use circuit_breaker::{CircuitBreaker, CircuitBreakerConfig};
 pub use crawl::CrawlConfig;
 pub use error::AppError;

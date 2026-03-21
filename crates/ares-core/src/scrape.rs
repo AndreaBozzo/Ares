@@ -1,3 +1,4 @@
+use crate::cache::{ContentCache, ExtractionCache};
 use crate::error::AppError;
 use crate::models::{NewExtraction, ScrapeResult, compute_hash};
 use crate::traits::{Cleaner, ExtractionStore, Extractor, Fetcher};
@@ -19,6 +20,8 @@ where
     store: Option<S>,
     model_name: String,
     skip_unchanged: bool,
+    content_cache: Option<ContentCache>,
+    extraction_cache: Option<ExtractionCache>,
 }
 
 impl<F, C, E, S> ScrapeService<F, C, E, S>
@@ -37,6 +40,8 @@ where
             store: None,
             model_name,
             skip_unchanged: false,
+            content_cache: None,
+            extraction_cache: None,
         }
     }
 
@@ -49,12 +54,25 @@ where
             store: Some(store),
             model_name,
             skip_unchanged: false,
+            content_cache: None,
+            extraction_cache: None,
         }
     }
 
     /// When enabled, skip saving if the data hash matches the previous extraction.
     pub fn with_skip_unchanged(mut self, skip: bool) -> Self {
         self.skip_unchanged = skip;
+        self
+    }
+
+    /// Enable in-memory caching for fetched content and LLM extraction results.
+    pub fn with_caches(
+        mut self,
+        content: Option<ContentCache>,
+        extraction: Option<ExtractionCache>,
+    ) -> Self {
+        self.content_cache = content;
+        self.extraction_cache = extraction;
         self
     }
 
@@ -72,10 +90,24 @@ where
         schema: &serde_json::Value,
         schema_name: &str,
     ) -> Result<ScrapeResult, AppError> {
-        // 1. Fetch
-        tracing::info!("Fetching {}", url);
-        let html = self.fetcher.fetch(url).await?;
-        tracing::info!("Fetched {} bytes of HTML", html.len());
+        // 1. Fetch (with optional content cache)
+        let html = if let Some(cache) = &self.content_cache {
+            if let Some(cached) = cache.get(url).await {
+                tracing::info!("Using cached content for {} ({} bytes)", url, cached.len());
+                cached
+            } else {
+                tracing::info!("Fetching {}", url);
+                let html = self.fetcher.fetch(url).await?;
+                tracing::info!("Fetched {} bytes of HTML", html.len());
+                cache.insert(url, html.clone()).await;
+                html
+            }
+        } else {
+            tracing::info!("Fetching {}", url);
+            let html = self.fetcher.fetch(url).await?;
+            tracing::info!("Fetched {} bytes of HTML", html.len());
+            html
+        };
 
         // 2. Clean
         let markdown = self.cleaner.clean(&html)?;
@@ -89,12 +121,31 @@ where
             }
         );
 
-        // 3. Extract
-        tracing::info!("Extracting with model {} ...", self.model_name);
-        let extracted = self.extractor.extract(&markdown, schema).await?;
-
-        // 4. Hash
+        // 3. Hash content (before extraction, needed for extraction cache key)
         let content_hash = compute_hash(&markdown);
+
+        // 4. Extract (with optional extraction cache)
+        let extracted = if let Some(cache) = &self.extraction_cache {
+            if let Some(cached) = cache
+                .get(&content_hash, schema_name, &self.model_name)
+                .await
+            {
+                tracing::info!("Using cached extraction for model {}", self.model_name);
+                cached
+            } else {
+                tracing::info!("Extracting with model {} ...", self.model_name);
+                let data = self.extractor.extract(&markdown, schema).await?;
+                cache
+                    .insert(&content_hash, schema_name, &self.model_name, data.clone())
+                    .await;
+                data
+            }
+        } else {
+            tracing::info!("Extracting with model {} ...", self.model_name);
+            self.extractor.extract(&markdown, schema).await?
+        };
+
+        // 5. Hash extracted data
         let data_hash = compute_hash(&extracted.to_string());
         tracing::info!(
             content_hash = %&content_hash[..8],
@@ -381,5 +432,116 @@ mod tests {
             .unwrap_err();
 
         assert!(matches!(err, AppError::DatabaseError(_)));
+    }
+
+    // -----------------------------------------------------------------------
+    // Cache integration tests
+    // -----------------------------------------------------------------------
+
+    fn test_cache_config() -> crate::cache::CacheConfig {
+        crate::cache::CacheConfig {
+            ttl: std::time::Duration::from_secs(60),
+            max_content_entries: 100,
+            max_extraction_entries: 100,
+        }
+    }
+
+    #[tokio::test]
+    async fn content_cache_avoids_second_fetch() {
+        let config = test_cache_config();
+        let content_cache = crate::cache::ContentCache::new(&config);
+        let extraction_cache = crate::cache::ExtractionCache::new(&config);
+
+        // MockFetcher with only ONE response — second call would return default
+        let extracted = serde_json::json!({"title": "Hello"});
+        let svc = ScrapeService::<_, _, _, NullStore>::new(
+            MockFetcher::new("<html>hello</html>"),
+            MockCleaner::passthrough(),
+            MockExtractor::with_responses(vec![Ok(extracted.clone()), Ok(extracted.clone())]),
+            "test-model".into(),
+        )
+        .with_caches(Some(content_cache), Some(extraction_cache));
+
+        // First scrape — fetches from MockFetcher
+        let r1 = svc
+            .scrape("https://example.com", &test_schema(), "test")
+            .await
+            .unwrap();
+        assert_eq!(r1.extracted_data, extracted);
+
+        // Second scrape — should use content cache (MockFetcher has no more responses)
+        let r2 = svc
+            .scrape("https://example.com", &test_schema(), "test")
+            .await
+            .unwrap();
+        assert_eq!(r2.extracted_data, extracted);
+        // Same content means same content hash
+        assert_eq!(r1.content_hash, r2.content_hash);
+    }
+
+    #[tokio::test]
+    async fn extraction_cache_avoids_second_llm_call() {
+        let config = test_cache_config();
+        let content_cache = crate::cache::ContentCache::new(&config);
+        let extraction_cache = crate::cache::ExtractionCache::new(&config);
+
+        // MockExtractor with only ONE response — second call would return default
+        let extracted = serde_json::json!({"title": "Hello"});
+        let svc = ScrapeService::<_, _, _, NullStore>::new(
+            MockFetcher::with_responses(vec![
+                Ok("<html>hello</html>".into()),
+                Ok("<html>hello</html>".into()),
+            ]),
+            MockCleaner::passthrough(),
+            MockExtractor::new(extracted.clone()),
+            "test-model".into(),
+        )
+        .with_caches(Some(content_cache), Some(extraction_cache));
+
+        // First scrape
+        let r1 = svc
+            .scrape("https://a.com", &test_schema(), "test")
+            .await
+            .unwrap();
+        assert_eq!(r1.extracted_data, extracted);
+
+        // Second scrape — different URL but same content after cleaning.
+        // Extraction cache should hit (same content_hash + schema + model).
+        let r2 = svc
+            .scrape("https://b.com", &test_schema(), "test")
+            .await
+            .unwrap();
+        assert_eq!(r2.extracted_data, extracted);
+    }
+
+    #[tokio::test]
+    async fn no_cache_calls_fetcher_every_time() {
+        let extracted = serde_json::json!({"title": "Hello"});
+        let svc = ScrapeService::<_, _, _, NullStore>::new(
+            MockFetcher::with_responses(vec![
+                Ok("<html>first</html>".into()),
+                Ok("<html>second</html>".into()),
+            ]),
+            MockCleaner::passthrough(),
+            MockExtractor::with_responses(vec![
+                Ok(extracted.clone()),
+                Ok(serde_json::json!({"title": "World"})),
+            ]),
+            "test-model".into(),
+        );
+        // No caches (default None)
+
+        let r1 = svc
+            .scrape("https://example.com", &test_schema(), "test")
+            .await
+            .unwrap();
+        assert_eq!(r1.extracted_data, extracted);
+
+        let r2 = svc
+            .scrape("https://example.com", &test_schema(), "test")
+            .await
+            .unwrap();
+        // Different extraction because no cache — fetcher returned different HTML
+        assert_eq!(r2.extracted_data, serde_json::json!({"title": "World"}));
     }
 }

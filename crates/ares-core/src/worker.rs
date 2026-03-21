@@ -2,6 +2,7 @@ use tokio_util::sync::CancellationToken;
 use url::Url;
 use uuid::Uuid;
 
+use crate::cache::{ContentCache, ExtractionCache};
 use crate::circuit_breaker::{CircuitBreaker, CircuitBreakerError};
 use crate::error::AppError;
 use crate::job::{CreateScrapeJobRequest, ScrapeJob, WorkerConfig};
@@ -115,6 +116,8 @@ where
     robots_checker: RC,
     circuit_breaker: CircuitBreaker,
     config: WorkerConfig,
+    content_cache: Option<ContentCache>,
+    extraction_cache: Option<ExtractionCache>,
 }
 
 impl<Q, F, C, EF, S, LD, RC> WorkerService<Q, F, C, EF, S, LD, RC>
@@ -149,7 +152,20 @@ where
             robots_checker,
             circuit_breaker,
             config,
+            content_cache: None,
+            extraction_cache: None,
         }
+    }
+
+    /// Enable in-memory caching for fetched content and LLM extraction results.
+    pub fn with_caches(
+        mut self,
+        content: Option<ContentCache>,
+        extraction: Option<ExtractionCache>,
+    ) -> Self {
+        self.content_cache = content;
+        self.extraction_cache = extraction;
+        self
     }
 
     /// Run the worker loop until cancellation.
@@ -238,7 +254,8 @@ where
             self.store.clone(),
             job.model.clone(),
         )
-        .with_skip_unchanged(self.config.skip_unchanged);
+        .with_skip_unchanged(self.config.skip_unchanged)
+        .with_caches(self.content_cache.clone(), self.extraction_cache.clone());
 
         // Wrap in circuit breaker
         let result = self

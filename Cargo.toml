@@ -85,6 +85,9 @@ subtle = "2"
 # Rate limiting
 tower_governor = "0.8"
 
+# Caching
+moka = { version = "0.12", features = ["future"] }
+
 # Database
 sqlx = { version = "0.8", features = ["runtime-tokio", "tls-native-tls", "postgres", "uuid", "chrono", "json"] }
 

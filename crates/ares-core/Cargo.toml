@@ -17,6 +17,7 @@ tokio.workspace = true
 tokio-util.workspace = true
 url.workspace = true
 jsonschema.workspace = true
+moka.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
