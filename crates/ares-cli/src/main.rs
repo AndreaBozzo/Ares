@@ -16,7 +16,8 @@ use ares_core::job_queue::JobQueue;
 use ares_core::traits::Fetcher;
 use ares_core::worker::{TracingWorkerReporter, WorkerService};
 use ares_core::{
-    NullStore, SchemaResolver, ScrapeService, ThrottleConfig, ThrottledFetcher, validate_schema,
+    CacheConfig, ContentCache, ExtractionCache, NullStore, SchemaResolver, ScrapeService,
+    ThrottleConfig, ThrottledFetcher, validate_schema,
 };
 use ares_db::{Database, DatabaseConfig, ExtractionRepository};
 
@@ -137,6 +138,14 @@ enum Commands {
         /// Per-domain throttle delay in milliseconds (e.g., 1000 for 1s between requests)
         #[arg(long)]
         throttle: Option<u64>,
+
+        /// Disable in-memory caching
+        #[arg(long, default_value_t = false)]
+        no_cache: bool,
+
+        /// Cache TTL in seconds (default: 3600)
+        #[arg(long, env = "ARES_CACHE_TTL", default_value_t = 3600)]
+        cache_ttl: u64,
     },
 
     /// Show extraction history for a URL
@@ -208,6 +217,14 @@ enum Commands {
         /// Per-domain throttle delay in milliseconds (e.g., 1000 for 1s between requests)
         #[arg(long)]
         throttle: Option<u64>,
+
+        /// Disable in-memory caching
+        #[arg(long, default_value_t = false)]
+        no_cache: bool,
+
+        /// Cache TTL in seconds (default: 3600)
+        #[arg(long, env = "ARES_CACHE_TTL", default_value_t = 3600)]
+        cache_ttl: u64,
     },
 }
 
@@ -361,6 +378,8 @@ async fn main() -> Result<()> {
             system_prompt,
             skip_unchanged,
             throttle,
+            no_cache,
+            cache_ttl,
         } => {
             let resolved = SchemaResolver::new("schemas").resolve(&schema)?;
             validate_schema(&resolved.schema).map_err(|e| anyhow::anyhow!("{e}"))?;
@@ -379,6 +398,8 @@ async fn main() -> Result<()> {
                 llm_timeout: llm_timeout.map(Duration::from_secs),
                 system_prompt: system_prompt.as_deref(),
                 skip_unchanged,
+                no_cache,
+                cache_ttl,
             };
 
             with_fetcher!(browser, fetch_timeout, throttle, |f| cmd_scrape(f, opts)
@@ -529,6 +550,8 @@ async fn main() -> Result<()> {
             system_prompt,
             skip_unchanged,
             throttle,
+            no_cache,
+            cache_ttl,
         } => {
             let worker_opts = WorkerOpts {
                 api_key: &api_key,
@@ -538,6 +561,8 @@ async fn main() -> Result<()> {
                 llm_timeout: llm_timeout.map(Duration::from_secs),
                 system_prompt: system_prompt.as_deref(),
                 skip_unchanged,
+                no_cache,
+                cache_ttl,
             };
 
             with_fetcher!(browser, worker_opts.fetch_timeout, throttle, |f| {
@@ -672,6 +697,22 @@ struct ScrapeOpts<'a> {
     llm_timeout: Option<Duration>,
     system_prompt: Option<&'a str>,
     skip_unchanged: bool,
+    no_cache: bool,
+    cache_ttl: u64,
+}
+
+fn build_caches(no_cache: bool, ttl_secs: u64) -> (Option<ContentCache>, Option<ExtractionCache>) {
+    if no_cache {
+        return (None, None);
+    }
+    let config = CacheConfig {
+        ttl: Duration::from_secs(ttl_secs),
+        ..CacheConfig::default()
+    };
+    (
+        Some(ContentCache::new(&config)),
+        Some(ExtractionCache::new(&config)),
+    )
 }
 
 /// One-shot scrape: fetch → clean → extract → (optionally) persist.
@@ -685,13 +726,16 @@ async fn cmd_scrape<F: Fetcher>(fetcher: F, opts: ScrapeOpts<'_>) -> Result<()> 
         extractor = extractor.with_system_prompt(p);
     }
 
+    let (content_cache, extraction_cache) = build_caches(opts.no_cache, opts.cache_ttl);
+
     let result = if opts.save {
         let db = Database::connect(&DatabaseConfig::from_env()?).await?;
         db.migrate().await?;
         let repo = db.extraction_repo();
         let service =
             ScrapeService::with_store(fetcher, cleaner, extractor, repo, opts.model.to_string())
-                .with_skip_unchanged(opts.skip_unchanged);
+                .with_skip_unchanged(opts.skip_unchanged)
+                .with_caches(content_cache, extraction_cache);
         service
             .scrape(opts.url, &opts.schema_value, opts.schema_name)
             .await?
@@ -702,7 +746,8 @@ async fn cmd_scrape<F: Fetcher>(fetcher: F, opts: ScrapeOpts<'_>) -> Result<()> 
             extractor,
             NullStore,
             opts.model.to_string(),
-        );
+        )
+        .with_caches(content_cache, extraction_cache);
         service
             .scrape(opts.url, &opts.schema_value, opts.schema_name)
             .await?
@@ -721,6 +766,8 @@ struct WorkerOpts<'a> {
     llm_timeout: Option<Duration>,
     system_prompt: Option<&'a str>,
     skip_unchanged: bool,
+    no_cache: bool,
+    cache_ttl: u64,
 }
 
 /// Long-running worker: poll job queue → circuit breaker → scrape → persist.
@@ -751,6 +798,8 @@ async fn cmd_worker<F: Fetcher>(fetcher: F, opts: WorkerOpts<'_>) -> Result<()> 
     let robots_checker = CachedRobotsChecker::with_user_agent("Ares/1.0");
     let cb = CircuitBreaker::new("llm", CircuitBreakerConfig::default());
 
+    let (content_cache, extraction_cache) = build_caches(opts.no_cache, opts.cache_ttl);
+
     let worker = WorkerService::new(
         job_repo,
         fetcher,
@@ -761,7 +810,8 @@ async fn cmd_worker<F: Fetcher>(fetcher: F, opts: WorkerOpts<'_>) -> Result<()> 
         robots_checker,
         cb,
         config,
-    );
+    )
+    .with_caches(content_cache, extraction_cache);
 
     let cancel = CancellationToken::new();
     let token = cancel.clone();
