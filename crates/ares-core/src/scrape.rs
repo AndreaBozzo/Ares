@@ -121,13 +121,14 @@ where
             }
         );
 
-        // 3. Hash content (before extraction, needed for extraction cache key)
+        // 3. Hash content and schema (before extraction, needed for extraction cache key)
         let content_hash = compute_hash(&markdown);
+        let schema_hash = compute_hash(&schema.to_string());
 
         // 4. Extract (with optional extraction cache)
         let extracted = if let Some(cache) = &self.extraction_cache {
             if let Some(cached) = cache
-                .get(&content_hash, schema_name, &self.model_name)
+                .get(&content_hash, schema_name, &schema_hash, &self.model_name)
                 .await
             {
                 tracing::info!("Using cached extraction for model {}", self.model_name);
@@ -136,7 +137,13 @@ where
                 tracing::info!("Extracting with model {} ...", self.model_name);
                 let data = self.extractor.extract(&markdown, schema).await?;
                 cache
-                    .insert(&content_hash, schema_name, &self.model_name, data.clone())
+                    .insert(
+                        &content_hash,
+                        schema_name,
+                        &schema_hash,
+                        &self.model_name,
+                        data.clone(),
+                    )
                     .await;
                 data
             }

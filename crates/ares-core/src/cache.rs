@@ -71,17 +71,20 @@ impl ExtractionCache {
         }
     }
 
-    fn cache_key(content_hash: &str, schema_name: &str, model: &str) -> String {
-        compute_hash(&format!("{content_hash}:{schema_name}:{model}"))
+    fn cache_key(content_hash: &str, schema_name: &str, schema_hash: &str, model: &str) -> String {
+        compute_hash(&format!(
+            "{content_hash}:{schema_name}:{schema_hash}:{model}"
+        ))
     }
 
     pub async fn get(
         &self,
         content_hash: &str,
         schema_name: &str,
+        schema_hash: &str,
         model: &str,
     ) -> Option<serde_json::Value> {
-        let key = Self::cache_key(content_hash, schema_name, model);
+        let key = Self::cache_key(content_hash, schema_name, schema_hash, model);
         let result = self.inner.get(&key).await;
         if result.is_some() {
             tracing::debug!(schema_name, model, "Extraction cache HIT");
@@ -95,10 +98,11 @@ impl ExtractionCache {
         &self,
         content_hash: &str,
         schema_name: &str,
+        schema_hash: &str,
         model: &str,
         data: serde_json::Value,
     ) {
-        let key = Self::cache_key(content_hash, schema_name, model);
+        let key = Self::cache_key(content_hash, schema_name, schema_hash, model);
         self.inner.insert(key, data).await;
     }
 }
@@ -146,13 +150,18 @@ mod tests {
         let cache = ExtractionCache::new(&test_config());
         let data = serde_json::json!({"title": "Hello"});
 
-        assert!(cache.get("hash1", "articles", "gpt-4o").await.is_none());
+        assert!(
+            cache
+                .get("hash1", "articles", "sh1", "gpt-4o")
+                .await
+                .is_none()
+        );
 
         cache
-            .insert("hash1", "articles", "gpt-4o", data.clone())
+            .insert("hash1", "articles", "sh1", "gpt-4o", data.clone())
             .await;
 
-        let cached = cache.get("hash1", "articles", "gpt-4o").await;
+        let cached = cache.get("hash1", "articles", "sh1", "gpt-4o").await;
         assert_eq!(cached.unwrap(), data);
     }
 
@@ -163,19 +172,28 @@ mod tests {
         let data_b = serde_json::json!({"title": "B"});
 
         cache
-            .insert("hash1", "articles", "gpt-4o", data_a.clone())
+            .insert("hash1", "articles", "sh1", "gpt-4o", data_a.clone())
             .await;
         cache
-            .insert("hash1", "articles", "gemini-2.5-flash", data_b.clone())
+            .insert(
+                "hash1",
+                "articles",
+                "sh1",
+                "gemini-2.5-flash",
+                data_b.clone(),
+            )
             .await;
 
         assert_eq!(
-            cache.get("hash1", "articles", "gpt-4o").await.unwrap(),
+            cache
+                .get("hash1", "articles", "sh1", "gpt-4o")
+                .await
+                .unwrap(),
             data_a
         );
         assert_eq!(
             cache
-                .get("hash1", "articles", "gemini-2.5-flash")
+                .get("hash1", "articles", "sh1", "gemini-2.5-flash")
                 .await
                 .unwrap(),
             data_b
@@ -189,18 +207,24 @@ mod tests {
         let data_b = serde_json::json!({"price": 42});
 
         cache
-            .insert("hash1", "articles", "gpt-4o", data_a.clone())
+            .insert("hash1", "articles", "sh_a", "gpt-4o", data_a.clone())
             .await;
         cache
-            .insert("hash1", "products", "gpt-4o", data_b.clone())
+            .insert("hash1", "products", "sh_b", "gpt-4o", data_b.clone())
             .await;
 
         assert_eq!(
-            cache.get("hash1", "articles", "gpt-4o").await.unwrap(),
+            cache
+                .get("hash1", "articles", "sh_a", "gpt-4o")
+                .await
+                .unwrap(),
             data_a
         );
         assert_eq!(
-            cache.get("hash1", "products", "gpt-4o").await.unwrap(),
+            cache
+                .get("hash1", "products", "sh_b", "gpt-4o")
+                .await
+                .unwrap(),
             data_b
         );
     }
