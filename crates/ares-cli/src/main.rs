@@ -488,8 +488,9 @@ async fn main() -> Result<()> {
                         OutputFormat::Table => {
                             let mut rows = vec![];
                             for job in &jobs {
-                                let url_display = if job.url.len() > 38 {
-                                    format!("{}...", &job.url[..35])
+                                let url_display = if job.url.chars().count() > 38 {
+                                    let truncated: String = job.url.chars().take(35).collect();
+                                    format!("{truncated}...")
                                 } else {
                                     job.url.clone()
                                 };
