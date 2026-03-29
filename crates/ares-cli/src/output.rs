@@ -35,21 +35,38 @@ impl OutputFormatter {
                 let mut wtr = csv::Writer::from_writer(std::io::stdout());
 
                 if let Some(arr) = data.as_array() {
-                    for (i, item) in arr.iter().enumerate() {
-                        if let Some(obj) = item.as_object() {
-                            if i == 0 {
-                                let headers: Vec<&str> = obj.keys().map(|s| s.as_str()).collect();
-                                wtr.write_record(&headers)?;
-                            }
-                            let row: Vec<String> = obj
-                                .values()
-                                .map(|v| match v {
-                                    Value::String(s) => s.clone(),
-                                    _ => v.to_string(),
-                                })
-                                .collect();
-                            wtr.write_record(&row)?;
-                        }
+                    let header_index =
+                        arr.iter()
+                            .position(|item| item.is_object())
+                            .ok_or_else(|| {
+                                anyhow::anyhow!(
+                                    "Cannot format array without object elements as CSV"
+                                )
+                            })?;
+
+                    let header_obj = arr[header_index]
+                        .as_object()
+                        .expect("header_index points to an object element");
+
+                    let headers: Vec<&str> = header_obj.keys().map(|s| s.as_str()).collect();
+                    wtr.write_record(&headers)?;
+
+                    for item in arr {
+                        let obj = item.as_object().ok_or_else(|| {
+                            anyhow::anyhow!(
+                                "Cannot format array containing non-object elements as CSV"
+                            )
+                        })?;
+
+                        let row: Vec<String> = headers
+                            .iter()
+                            .map(|key| match obj.get(*key) {
+                                Some(Value::String(s)) => s.clone(),
+                                Some(Value::Null) | None => String::new(),
+                                Some(v) => v.to_string(),
+                            })
+                            .collect();
+                        wtr.write_record(&row)?;
                     }
                 } else if let Some(obj) = data.as_object() {
                     let headers: Vec<&str> = obj.keys().map(|s| s.as_str()).collect();
@@ -100,8 +117,9 @@ impl OutputFormatter {
                                     })
                                     .unwrap_or_default();
 
-                                let val_display = if val.len() > 60 {
-                                    format!("{}...", &val[..57])
+                                let val_display = if val.chars().count() > 60 {
+                                    let truncated: String = val.chars().take(57).collect();
+                                    format!("{truncated}...")
                                 } else {
                                     val
                                 };
