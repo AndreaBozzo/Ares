@@ -120,7 +120,7 @@ impl OutputFormatter {
                         .map(|(i, k)| format!("{k:<w$}", k = k.to_uppercase(), w = widths[i]))
                         .collect::<Vec<_>>()
                         .join("  ");
-                    println!("{}", header_row);
+                    println!("{header_row}");
                     println!("{}", "-".repeat(header_row.len()));
 
                     // Print Rows
@@ -131,7 +131,7 @@ impl OutputFormatter {
                             .map(|(i, col)| format!("{col:<w$}", col = col, w = widths[i]))
                             .collect::<Vec<_>>()
                             .join("  ");
-                        println!("{}", formatted_row);
+                        println!("{formatted_row}");
                     }
                 } else {
                     anyhow::bail!("Array elements must be objects to render as a table");
