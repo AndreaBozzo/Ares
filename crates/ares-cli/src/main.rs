@@ -21,6 +21,9 @@ use ares_core::{
 };
 use ares_db::{Database, DatabaseConfig, ExtractionRepository};
 
+mod output;
+use output::{OutputFormat, OutputFormatter};
+
 // ---------------------------------------------------------------------------
 // Fetcher creation — shared by Scrape and Worker commands.
 // ---------------------------------------------------------------------------
@@ -146,6 +149,10 @@ enum Commands {
         /// Cache TTL in seconds (default: 3600)
         #[arg(long, env = "ARES_CACHE_TTL", default_value_t = 3600)]
         cache_ttl: u64,
+
+        /// Output format (json, jsonl, csv, table, jq)
+        #[arg(long, default_value = "json")]
+        format: OutputFormat,
     },
 
     /// Show extraction history for a URL
@@ -161,6 +168,10 @@ enum Commands {
         /// Number of results to show
         #[arg(short, long, default_value_t = 10)]
         limit: usize,
+
+        /// Output format
+        #[arg(long, default_value = "json")]
+        format: OutputFormat,
     },
     /// Manage crawl sessions
     Crawl {
@@ -267,6 +278,10 @@ enum JobCommands {
         /// Number of results
         #[arg(short, long, default_value_t = 20)]
         limit: usize,
+
+        /// Output format
+        #[arg(long, default_value = "table")]
+        format: OutputFormat,
     },
 
     /// Show details of a specific job
@@ -380,6 +395,7 @@ async fn main() -> Result<()> {
             throttle,
             no_cache,
             cache_ttl,
+            format,
         } => {
             let resolved = SchemaResolver::new("schemas").resolve(&schema)?;
             validate_schema(&resolved.schema).map_err(|e| anyhow::anyhow!("{e}"))?;
@@ -400,6 +416,7 @@ async fn main() -> Result<()> {
                 skip_unchanged,
                 no_cache,
                 cache_ttl,
+                format,
             };
 
             with_fetcher!(browser, fetch_timeout, throttle, |f| cmd_scrape(f, opts)
@@ -411,11 +428,12 @@ async fn main() -> Result<()> {
             url,
             schema_name,
             limit,
+            format,
         } => {
             let db = Database::connect(&DatabaseConfig::from_env()?).await?;
             db.migrate().await?;
             let repo = db.extraction_repo();
-            cmd_history(&url, &schema_name, limit, &repo).await?;
+            cmd_history(&url, &schema_name, limit, &repo, format).await?;
         }
 
         Commands::Job { action } => {
@@ -447,7 +465,11 @@ async fn main() -> Result<()> {
                     println!("Created job: {}", job.id);
                 }
 
-                JobCommands::List { status, limit } => {
+                JobCommands::List {
+                    status,
+                    limit,
+                    format,
+                } => {
                     let status_filter = status
                         .map(|s| {
                             s.parse::<JobStatus>()
@@ -462,29 +484,34 @@ async fn main() -> Result<()> {
                         return Ok(());
                     }
 
-                    println!(
-                        "{:<38} {:<12} {:<40} {:<20} {:<16}",
-                        "ID", "STATUS", "URL", "MODEL", "CREATED"
-                    );
-                    println!("{}", "-".repeat(120));
+                    let val = match format {
+                        OutputFormat::Table => {
+                            let mut rows = vec![];
+                            for job in &jobs {
+                                let url_display = if job.url.chars().count() > 38 {
+                                    let truncated: String = job.url.chars().take(35).collect();
+                                    format!("{truncated}...")
+                                } else {
+                                    job.url.clone()
+                                };
+                                rows.push(serde_json::json!({
+                                    "ID": job.id.to_string(),
+                                    "STATUS": job.status.to_string(),
+                                    "URL": url_display,
+                                    "MODEL": job.model.clone(),
+                                    "CREATED": job.created_at.format("%Y-%m-%d %H:%M").to_string()
+                                }));
+                            }
+                            serde_json::to_value(rows)?
+                        }
+                        _ => serde_json::to_value(&jobs)?,
+                    };
 
-                    for job in &jobs {
-                        let url_display = if job.url.len() > 38 {
-                            format!("{}...", &job.url[..35])
-                        } else {
-                            job.url.clone()
-                        };
-                        println!(
-                            "{:<38} {:<12} {:<40} {:<20} {}",
-                            job.id,
-                            job.status,
-                            url_display,
-                            job.model,
-                            job.created_at.format("%Y-%m-%d %H:%M"),
-                        );
+                    OutputFormatter::format(format, &val)?;
+
+                    if format == OutputFormat::Table {
+                        println!("\nTotal: {} jobs", jobs.len());
                     }
-
-                    println!("\nTotal: {} jobs", jobs.len());
                 }
 
                 JobCommands::Show { id } => {
@@ -699,6 +726,7 @@ struct ScrapeOpts<'a> {
     skip_unchanged: bool,
     no_cache: bool,
     cache_ttl: u64,
+    format: OutputFormat,
 }
 
 fn build_caches(no_cache: bool, ttl_secs: u64) -> (Option<ContentCache>, Option<ExtractionCache>) {
@@ -753,7 +781,8 @@ async fn cmd_scrape<F: Fetcher>(fetcher: F, opts: ScrapeOpts<'_>) -> Result<()> 
             .await?
     };
 
-    println!("{}", serde_json::to_string_pretty(&result.extracted_data)?);
+    let val = serde_json::to_value(&result.extracted_data)?;
+    OutputFormatter::format(opts.format, &val)?;
     Ok(())
 }
 
@@ -852,6 +881,7 @@ async fn cmd_history(
     schema_name: &str,
     limit: usize,
     repo: &ExtractionRepository,
+    format: OutputFormat,
 ) -> Result<()> {
     let history = repo.get_history(url, schema_name, limit, 0).await?;
 
@@ -860,28 +890,38 @@ async fn cmd_history(
         return Ok(());
     }
 
-    println!("Extraction history for {url} (schema: {schema_name}):\n");
+    let val = match format {
+        OutputFormat::Table => {
+            let mut rows = vec![];
+            for (i, extraction) in history.iter().enumerate() {
+                let changed = if i + 1 < history.len() {
+                    extraction.data_hash != history[i + 1].data_hash
+                } else {
+                    true
+                };
+                let status = if changed { "CHANGED" } else { "unchanged" };
+                rows.push(serde_json::json!({
+                    "STATUS": status,
+                    "CREATED_AT": extraction.created_at.format("%Y-%m-%d %H:%M:%S UTC").to_string(),
+                    "ID": extraction.id.to_string(),
+                    "MODEL": extraction.model.clone(),
+                    "HASH": format!("{}...", &extraction.data_hash[..8])
+                }));
+            }
+            serde_json::to_value(rows)?
+        }
+        _ => serde_json::to_value(&history)?,
+    };
 
-    for (i, extraction) in history.iter().enumerate() {
-        let changed = if i + 1 < history.len() {
-            extraction.data_hash != history[i + 1].data_hash
-        } else {
-            true // First extraction is always "new"
-        };
-
-        let status = if changed { "CHANGED" } else { "unchanged" };
-
-        println!(
-            "  [{}] {} — {} (model: {}, hash: {}...)",
-            status,
-            extraction.created_at.format("%Y-%m-%d %H:%M:%S UTC"),
-            extraction.id,
-            extraction.model,
-            &extraction.data_hash[..8],
-        );
+    if format == OutputFormat::Table {
+        println!("Extraction history for {url} (schema: {schema_name}):\n");
     }
 
-    println!("\nTotal: {} extractions", history.len());
+    OutputFormatter::format(format, &val)?;
+
+    if format == OutputFormat::Table {
+        println!("\nTotal: {} extractions", history.len());
+    }
 
     Ok(())
 }

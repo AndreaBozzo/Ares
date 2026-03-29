@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use chrono::{DateTime, Utc};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
@@ -54,7 +56,7 @@ pub struct ScrapeResult {
     /// The persisted extraction ID (if saved to DB).
     pub extraction_id: Option<Uuid>,
     /// The raw HTML content (used for link discovery in crawling).
-    pub raw_html: Option<String>,
+    pub raw_html: Option<Arc<str>>,
 }
 
 /// Compute a SHA-256 hash of a string, returned as 64-char hex.

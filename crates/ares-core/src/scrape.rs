@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use crate::cache::{ContentCache, ExtractionCache};
 use crate::error::AppError;
 use crate::models::{NewExtraction, ScrapeResult, compute_hash};
@@ -91,20 +93,20 @@ where
         schema_name: &str,
     ) -> Result<ScrapeResult, AppError> {
         // 1. Fetch (with optional content cache)
-        let html = if let Some(cache) = &self.content_cache {
+        let html: Arc<str> = if let Some(cache) = &self.content_cache {
             if let Some(cached) = cache.get(url).await {
                 tracing::info!("Using cached content for {} ({} bytes)", url, cached.len());
                 cached
             } else {
                 tracing::info!("Fetching {}", url);
-                let html = self.fetcher.fetch(url).await?;
+                let html: Arc<str> = self.fetcher.fetch(url).await?.into();
                 tracing::info!("Fetched {} bytes of HTML", html.len());
-                cache.insert(url, html.clone()).await;
+                cache.insert(url, Arc::clone(&html)).await;
                 html
             }
         } else {
             tracing::info!("Fetching {}", url);
-            let html = self.fetcher.fetch(url).await?;
+            let html: Arc<str> = self.fetcher.fetch(url).await?.into();
             tracing::info!("Fetched {} bytes of HTML", html.len());
             html
         };

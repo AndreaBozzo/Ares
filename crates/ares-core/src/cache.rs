@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::time::Duration;
 
 use moka::future::Cache;
@@ -25,7 +26,7 @@ impl Default for CacheConfig {
 /// Cache for fetched HTML content. Keyed by URL hash.
 #[derive(Clone)]
 pub struct ContentCache {
-    inner: Cache<String, String>,
+    inner: Cache<String, Arc<str>>,
 }
 
 impl ContentCache {
@@ -38,7 +39,7 @@ impl ContentCache {
         }
     }
 
-    pub async fn get(&self, url: &str) -> Option<String> {
+    pub async fn get(&self, url: &str) -> Option<Arc<str>> {
         let key = compute_hash(url);
         let result = self.inner.get(&key).await;
         if result.is_some() {
@@ -49,7 +50,7 @@ impl ContentCache {
         result
     }
 
-    pub async fn insert(&self, url: &str, html: String) {
+    pub async fn insert(&self, url: &str, html: Arc<str>) {
         let key = compute_hash(url);
         self.inner.insert(key, html).await;
     }
@@ -130,7 +131,7 @@ mod tests {
             .await;
 
         let cached = cache.get("https://example.com").await;
-        assert_eq!(cached.unwrap(), "<html>hello</html>");
+        assert_eq!(cached.unwrap().as_ref(), "<html>hello</html>");
     }
 
     #[tokio::test]
@@ -140,8 +141,8 @@ mod tests {
         cache.insert("https://a.com", "page A".into()).await;
         cache.insert("https://b.com", "page B".into()).await;
 
-        assert_eq!(cache.get("https://a.com").await.unwrap(), "page A");
-        assert_eq!(cache.get("https://b.com").await.unwrap(), "page B");
+        assert_eq!(cache.get("https://a.com").await.unwrap().as_ref(), "page A");
+        assert_eq!(cache.get("https://b.com").await.unwrap().as_ref(), "page B");
         assert!(cache.get("https://c.com").await.is_none());
     }
 
