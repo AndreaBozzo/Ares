@@ -824,7 +824,7 @@ async fn cmd_worker<F: Fetcher>(fetcher: F, opts: WorkerOpts<'_>) -> Result<()> 
         extractor_factory = extractor_factory.with_system_prompt(p);
     }
     let discoverer = HtmlLinkDiscoverer::new();
-    let robots_checker = CachedRobotsChecker::with_user_agent("Ares/1.0");
+    let robots_checker = CachedRobotsChecker::with_user_agent("Ares/0.2");
     let cb = CircuitBreaker::new("llm", CircuitBreakerConfig::default());
 
     let (content_cache, extraction_cache) = build_caches(opts.no_cache, opts.cache_ttl);

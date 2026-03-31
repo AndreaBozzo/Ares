@@ -1,0 +1,72 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "OpenDataDataset",
+  "type": "object",
+  "properties": {
+    "title": {
+      "type": "string",
+      "description": "Dataset title"
+    },
+    "description": {
+      "type": "string",
+      "description": "Dataset description or abstract"
+    },
+    "publisher": {
+      "type": "string",
+      "description": "Publishing organization or agency"
+    },
+    "tags": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Dataset tags or keywords"
+    },
+    "format": {
+      "type": "string",
+      "description": "Data format (e.g. CSV, JSON, XML, GeoJSON, API)"
+    },
+    "license": {
+      "type": "string",
+      "description": "License name (e.g. CC0, ODbL, CC-BY-4.0)"
+    },
+    "last_updated": {
+      "type": "string",
+      "description": "Date the dataset was last updated"
+    },
+    "download_url": {
+      "type": "string",
+      "description": "Direct download URL for the dataset"
+    },
+    "documentation_url": {
+      "type": "string",
+      "description": "URL for dataset documentation or data dictionary"
+    },
+    "temporal_coverage": {
+      "type": "string",
+      "description": "Time period the data covers (e.g. 2020-2024)"
+    },
+    "spatial_coverage": {
+      "type": "string",
+      "description": "Geographic area the data covers (e.g. United States, New York City)"
+    },
+    "url": {
+      "type": "string",
+      "description": "Canonical URL of the dataset page"
+    }
+  },
+  "required": [
+    "title",
+    "description",
+    "publisher",
+    "tags",
+    "format",
+    "license",
+    "last_updated",
+    "download_url",
+    "documentation_url",
+    "temporal_coverage",
+    "spatial_coverage",
+    "url"
+  ]
+}

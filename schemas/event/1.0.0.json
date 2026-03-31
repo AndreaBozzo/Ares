@@ -1,0 +1,69 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "EventListing",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Event name or title"
+    },
+    "organizer": {
+      "type": "string",
+      "description": "Event organizer or host"
+    },
+    "start_date": {
+      "type": "string",
+      "description": "Event start date and time"
+    },
+    "end_date": {
+      "type": "string",
+      "description": "Event end date and time"
+    },
+    "location": {
+      "type": "string",
+      "description": "Event location (city, address, or Online)"
+    },
+    "venue": {
+      "type": "string",
+      "description": "Venue name"
+    },
+    "description": {
+      "type": "string",
+      "description": "Event description or summary"
+    },
+    "ticket_price": {
+      "type": "string",
+      "description": "Ticket price or price range (e.g. Free, $25, $50-$200)"
+    },
+    "ticket_url": {
+      "type": "string",
+      "description": "URL to purchase tickets or register"
+    },
+    "category": {
+      "type": "string",
+      "description": "Event category (e.g. Conference, Concert, Workshop, Meetup)"
+    },
+    "image_url": {
+      "type": "string",
+      "description": "URL of the event banner or image"
+    },
+    "url": {
+      "type": "string",
+      "description": "Canonical URL of the event page"
+    }
+  },
+  "required": [
+    "name",
+    "organizer",
+    "start_date",
+    "end_date",
+    "location",
+    "venue",
+    "description",
+    "ticket_price",
+    "ticket_url",
+    "category",
+    "image_url",
+    "url"
+  ]
+}

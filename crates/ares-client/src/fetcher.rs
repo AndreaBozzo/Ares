@@ -27,7 +27,7 @@ impl ReqwestFetcher {
     pub fn with_timeout(timeout: Duration) -> Result<Self, AppError> {
         let timeout_secs = timeout.as_secs();
         let client = Client::builder()
-            .user_agent("Ares/0.1 (AI Scraper)")
+            .user_agent("Ares/0.2 (AI Scraper)")
             .timeout(timeout)
             .build()
             .map_err(|e| AppError::HttpError(e.to_string()))?;

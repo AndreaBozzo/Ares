@@ -1,0 +1,80 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "RecipePage",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Recipe name"
+    },
+    "author": {
+      "type": "string",
+      "description": "Recipe author or chef name"
+    },
+    "description": {
+      "type": "string",
+      "description": "Brief description of the dish"
+    },
+    "prep_time": {
+      "type": "string",
+      "description": "Preparation time (e.g. 15 mins)"
+    },
+    "cook_time": {
+      "type": "string",
+      "description": "Cooking time (e.g. 30 mins)"
+    },
+    "total_time": {
+      "type": "string",
+      "description": "Total time from start to finish"
+    },
+    "servings": {
+      "type": "string",
+      "description": "Number of servings (e.g. 4 servings)"
+    },
+    "ingredients": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "List of ingredients with quantities"
+    },
+    "instructions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Step-by-step cooking instructions"
+    },
+    "cuisine": {
+      "type": "string",
+      "description": "Cuisine type (e.g. Italian, Mexican, Japanese)"
+    },
+    "image_url": {
+      "type": "string",
+      "description": "URL of the recipe photo"
+    },
+    "rating": {
+      "type": "number",
+      "description": "Average user rating"
+    },
+    "url": {
+      "type": "string",
+      "description": "Canonical URL of the recipe page"
+    }
+  },
+  "required": [
+    "name",
+    "author",
+    "description",
+    "prep_time",
+    "cook_time",
+    "total_time",
+    "servings",
+    "ingredients",
+    "instructions",
+    "cuisine",
+    "image_url",
+    "rating",
+    "url"
+  ]
+}

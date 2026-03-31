@@ -7,6 +7,8 @@ This crate contains the implementations of the traits defined in `ares-core`, in
 - Headless Browser Fetcher using `chromiumoxide` (feature-gated)
 - HTML cleaner to Markdown using `htmd`
 - LLM Extractor client (OpenAI-compatible)
+- `HtmlLinkDiscoverer` for crawling link extraction from HTML
+- `CachedRobotsChecker` for per-domain robots.txt compliance with caching
 
 ## Overview
 Ares fetches web pages, converts HTML to Markdown, and uses LLM APIs to extract structured data defined by JSON Schemas. It supports persistent job queues with retries, circuit breaking, rate-limiting, and more.

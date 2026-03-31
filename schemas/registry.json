@@ -1,4 +1,10 @@
 {
   "blog": "1.0.0",
-  "github_repo": "1.0.0"
+  "github_repo": "1.0.0",
+  "product": "1.0.0",
+  "news_article": "1.0.0",
+  "job_listing": "1.0.0",
+  "recipe": "1.0.0",
+  "event": "1.0.0",
+  "dataset": "1.0.0"
 }

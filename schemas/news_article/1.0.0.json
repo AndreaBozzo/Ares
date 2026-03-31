@@ -1,0 +1,62 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "NewsArticle",
+  "type": "object",
+  "properties": {
+    "headline": {
+      "type": "string",
+      "description": "Article headline or title"
+    },
+    "author": {
+      "type": "string",
+      "description": "Author name"
+    },
+    "publish_date": {
+      "type": "string",
+      "description": "Publication date"
+    },
+    "source": {
+      "type": "string",
+      "description": "News outlet or publication name"
+    },
+    "summary": {
+      "type": "string",
+      "description": "Brief summary or lead paragraph"
+    },
+    "body_text": {
+      "type": "string",
+      "description": "Full article body text"
+    },
+    "category": {
+      "type": "string",
+      "description": "Article category (e.g. Politics, Technology, Sports)"
+    },
+    "tags": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Article tags or keywords"
+    },
+    "image_url": {
+      "type": "string",
+      "description": "URL of the article's main image"
+    },
+    "url": {
+      "type": "string",
+      "description": "Canonical URL of the article"
+    }
+  },
+  "required": [
+    "headline",
+    "author",
+    "publish_date",
+    "source",
+    "summary",
+    "body_text",
+    "category",
+    "tags",
+    "image_url",
+    "url"
+  ]
+}

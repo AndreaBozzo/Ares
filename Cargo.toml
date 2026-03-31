@@ -9,7 +9,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 license = "Apache-2.0"
 authors = ["Andrea Bozzo"]
@@ -98,9 +98,9 @@ tempfile = "3"
 http-body-util = "0.1"
 
 # Internal crates
-ares-core = { version = "0.1.0", path = "crates/ares-core" }
-ares-client = { version = "0.1.0", path = "crates/ares-client" }
-ares-db = { version = "0.1.0", path = "crates/ares-db" }
+ares-core = { version = "0.2.0", path = "crates/ares-core" }
+ares-client = { version = "0.2.0", path = "crates/ares-client" }
+ares-db = { version = "0.2.0", path = "crates/ares-db" }
 
 [profile.release]
 lto = true

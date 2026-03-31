@@ -4,9 +4,10 @@ REST API for [Ares](https://github.com/AndreaBozzo/Ares), the industrial-grade A
 
 This crate provides an Axum-based HTTP server that exposes endpoints for:
 - One-shot scraping, extraction, and persistence
-- Background job queuing and management
+- Background job queuing and management (with retry support)
+- Crawl session management (start, status, results)
 - Fetching extraction history
-- Managing JSON Schemas
+- Managing JSON Schemas (CRUD with versioning)
 
 It includes auto-generated OpenAPI documentation available via Swagger UI.
 

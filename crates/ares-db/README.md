@@ -3,9 +3,9 @@
 PostgreSQL persistence layer for [Ares](https://github.com/AndreaBozzo/Ares), the industrial-grade AI web scraper.
 
 This crate manages database interactions using `sqlx`, providing:
-- The schema migrations for Ares tables
+- Schema migrations for Ares tables (extractions, scrape jobs, crawl support)
 - Implementations of the `ExtractionStore` trait (`ExtractionRepository`)
-- Implementations of the `JobQueue` trait (`JobRepository`)
+- Implementations of the `JobQueue` trait (`ScrapeJobRepository`) with crawl session tracking
 - Database connection configuration parsing from environment variables
 
 ## Overview

@@ -49,10 +49,14 @@ flowchart TB
     WorkerSvc["WorkerService\n(Poll queue · retry · shutdown)"]
     CB["CircuitBreaker"]
     Throttle["ThrottledFetcher\n(Per-domain rate limit)"]
+    Cache["ContentCache · ExtractionCache\n(In-memory / moka)"]
+    Crawl["CrawlConfig\n(Depth · Pages · Domains · Robots)"]
     NullStore["NullStore\n(No-op persistence)"]
 
     WorkerSvc -->|Creates per job| ScrapeSvc
     WorkerSvc -->|Guards scrape calls| CB
+    ScrapeSvc -->|Optional| Cache
+    WorkerSvc -->|Spawns child jobs| Crawl
   end
 
   %% External Adapters
@@ -62,6 +66,8 @@ flowchart TB
     Cleaner["HtmdCleaner\n(HTML → Markdown)"]
     LlmClient["OpenAiExtractor\n(JSON Schema extraction)"]
     Factory["OpenAiExtractorFactory\n(Creates extractors per job)"]
+    LinkDisc["HtmlLinkDiscoverer\n(Anchor tag extraction)"]
+    Robots["CachedRobotsChecker\n(Per-domain robots.txt)"]
   end
 
   %% Database
@@ -100,10 +106,10 @@ flowchart TB
 ```
 
 ```
-ares-cli          CLI interface — arg parsing, wiring, delegation
+ares-cli          CLI interface — arg parsing, wiring, output formatting, delegation
 ares-api          REST API — Axum HTTP server, OpenAPI/Swagger UI, Bearer auth
-ares-core         Business logic — ScrapeService, WorkerService, CircuitBreaker, SchemaResolver, traits
-ares-client       External adapters — ReqwestFetcher, BrowserFetcher, HtmdCleaner, OpenAiExtractor
+ares-core         Business logic — ScrapeService, WorkerService, CircuitBreaker, CrawlConfig, ContentCache, ExtractionCache, SchemaResolver, traits
+ares-client       External adapters — ReqwestFetcher, BrowserFetcher, HtmdCleaner, OpenAiExtractor, HtmlLinkDiscoverer, CachedRobotsChecker
 ares-db           PostgreSQL persistence — ExtractionRepository, ScrapeJobRepository, migrations
 ```
 
@@ -169,10 +175,21 @@ One-shot extraction. Fetches the URL, cleans HTML to Markdown, sends it to the L
 | `--llm-timeout` | | LLM API timeout in seconds (default: 120) |
 | `--system-prompt` | | Custom system prompt for LLM extraction |
 | `--skip-unchanged` | | Skip saving when extracted data hasn't changed (requires `--save`) |
+| `--throttle` | | Per-domain throttle delay in milliseconds (e.g., 1000 for 1s between requests) |
+| `--no-cache` | | Disable in-memory caching (content + extraction) |
+| `--cache-ttl` | `ARES_CACHE_TTL` | Cache TTL in seconds (default: 3600) |
+| `--format` | | Output format: `json`, `jsonl`, `csv`, `table`, `jq` (default: `json`) |
 
 ### `ares history`
 
 Show extraction history for a URL + schema pair, with change detection.
+
+| Flag | Env Var | Description |
+|---|---|---|
+| `-u, --url` | | Target URL |
+| `-s, --schema-name` | | Schema name to filter by |
+| `-l, --limit` | | Number of results (default: 10) |
+| `--format` | | Output format: `json`, `jsonl`, `csv`, `table`, `jq` (default: `json`) |
 
 ### `ares job create|list|show|cancel`
 
@@ -192,6 +209,43 @@ Start a background worker that polls the job queue, processes scrape jobs throug
 | `--llm-timeout` | | LLM API timeout in seconds (default: 120) |
 | `--system-prompt` | | Custom system prompt for LLM extraction |
 | `--skip-unchanged` | | Skip saving when extracted data hasn't changed |
+| `--throttle` | | Per-domain throttle delay in milliseconds |
+| `--no-cache` | | Disable in-memory caching |
+| `--cache-ttl` | `ARES_CACHE_TTL` | Cache TTL in seconds (default: 3600) |
+
+### `ares crawl start|status|results`
+
+Recursive web crawling with link discovery and robots.txt compliance. The seed URL is fetched, links are discovered, and child jobs are created in the queue for the worker to process.
+
+| Flag | Description |
+|---|---|
+| `-u, --url` | Seed URL to start crawling from |
+| `-s, --schema` | Schema path or `name@version` |
+| `-d, --max-depth` | Maximum crawl depth (default: 1) |
+| `-m, --model` | LLM model |
+| `-b, --base-url` | API base URL |
+| `--max-pages` | Maximum number of pages to crawl (default: 100) |
+| `--allowed-domains` | Comma-separated allowed domains (defaults to seed URL domain) |
+| `--schema-name` | Override schema name |
+
+```bash
+# Start a crawl (creates seed job + discovers links)
+ares crawl start -u https://example.com -s blog@latest --max-depth 2 --max-pages 10
+
+# Check progress (requires a worker running in another terminal)
+ares crawl status <SESSION_ID>
+
+# View extracted data from all crawled pages
+ares crawl results <SESSION_ID>
+```
+
+### `ares schema validate`
+
+Validate a JSON Schema file against the JSON Schema specification.
+
+```bash
+ares schema validate schemas/blog/1.0.0.json
+```
 
 ## REST API
 
@@ -223,6 +277,12 @@ Once running, interactive API docs are available at **`/swagger-ui`**.
 | `GET` | `/v1/schemas` | Bearer | List all schemas |
 | `GET` | `/v1/schemas/{name}/{version}` | Bearer | Get schema definition |
 | `POST` | `/v1/schemas` | Bearer | Create/upload a schema version |
+| `PUT` | `/v1/schemas/{name}/{version}` | Bearer | Update a schema version |
+| `DELETE` | `/v1/schemas/{name}/{version}` | Bearer | Delete a schema version |
+| `POST` | `/v1/jobs/{id}/retry` | Bearer | Retry a failed/cancelled job |
+| `POST` | `/v1/crawl` | Bearer | Start a crawl session |
+| `GET` | `/v1/crawl/{id}` | Bearer | Get crawl session status |
+| `GET` | `/v1/crawl/{id}/results` | Bearer | Get crawl session results |
 | `GET` | `/health` | — | Health check (database connectivity) |
 
 ### Authentication
@@ -241,12 +301,18 @@ Schemas are versioned JSON Schema files stored in `schemas/`:
 
 ```
 schemas/
-  registry.json           # {"blog": "1.0.0"}
-  blog/
-    1.0.0.json            # JSON Schema definition
+  registry.json
+  blog/1.0.0.json            # Blog posts and articles
+  github_repo/1.0.0.json     # GitHub repository pages
+  product/1.0.0.json         # E-commerce product pages
+  news_article/1.0.0.json    # News articles
+  job_listing/1.0.0.json     # Job board listings
+  recipe/1.0.0.json          # Recipe pages
+  event/1.0.0.json           # Event listings
+  dataset/1.0.0.json         # Open data portal datasets
 ```
 
-Reference by path (`schemas/blog/1.0.0.json`) or by name (`blog@1.0.0`, `blog@latest`).
+Reference by path (`schemas/blog/1.0.0.json`) or by name (`blog@1.0.0`, `blog@latest`). Validate with `ares schema validate <path>`.
 
 ## Configuration
 
@@ -264,6 +330,7 @@ Reference by path (`schemas/blog/1.0.0.json`) or by name (`blog@1.0.0`, `blog@la
 | `ARES_RATE_LIMIT_BURST` | No | `30` | Max burst requests per IP |
 | `ARES_RATE_LIMIT_RPS` | No | `1` | Request replenish rate (per second) |
 | `ARES_BODY_SIZE_LIMIT` | No | `2097152` | Max request body size in bytes (2 MB) |
+| `ARES_CACHE_TTL` | No | `3600` | In-memory cache TTL in seconds |
 | `CHROME_BIN` | No | Auto-detected | Override path to Chrome/Chromium binary |
 
 **Gemini** works via the OpenAI-compatible endpoint:
