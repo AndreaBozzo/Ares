@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-03-31
+
+
+### Added
+
+- **schema**: Validate JSON Schema on creation
+- Add web crawling functionality
+- **cache**: Implement in-memory caching for content and extraction results
+- Add CLI output formats and optimize ContentCache
+- Update package versions to 0.2.0 and enhance documentation for new features
+
+
+### Changed
+
+- **cli**: Extract shared fetcher wiring into with_fetcher! macro
+
+
+### Dependencies
+
+- **deps**: Bump quinn-proto from 0.11.13 to 0.11.14
+
+
+### Documentation
+
+- Update README with crates.io badge and remove outdated release date
+
+
+### Fixed
+
+- **deps**: Update aws-lc-rs to 1.16.1 to resolve 3 security advisories
 ## [0.1.0] - 2026-02-28
 
 
@@ -66,6 +96,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Update actions/checkout version to v6 in CI configuration
 - Clippy
 - **docs**: Correct subgraph syntax in architecture diagram
+- **ci**: Revert dry-run to ares-core only
+- **db**: Move migrations into ares-db crate for crates.io packaging
+- **ci**: Match 'already exists' in publish idempotency check
 
 
 ### Miscellaneous
