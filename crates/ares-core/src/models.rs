@@ -56,6 +56,7 @@ pub struct ScrapeResult {
     /// The persisted extraction ID (if saved to DB).
     pub extraction_id: Option<Uuid>,
     /// The raw HTML content (used for link discovery in crawling).
+    #[serde(skip)]
     pub raw_html: Option<Arc<str>>,
 }
 
