@@ -5,6 +5,8 @@
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use crate::rand::random_index;
+
 /// TLS backend used by the HTTP client.
 ///
 /// Different TLS implementations produce distinct ClientHello fingerprints
@@ -99,16 +101,19 @@ impl ProxyEntry {
 
     /// Returns the proxy URL with embedded credentials if present.
     ///
-    /// Converts `http://host:port` + user/pass into `http://user:pass@host:port`.
+    /// Credentials are percent-encoded so that reserved characters
+    /// (`@`, `:`, `/`, `%`, …) don't break the URL.
     pub fn authenticated_url(&self) -> String {
         match (&self.username, &self.password) {
             (Some(user), Some(pass)) => {
+                let enc_user = percent_encode_userinfo(user);
+                let enc_pass = percent_encode_userinfo(pass);
                 if let Some(rest) = self.url.strip_prefix("http://") {
-                    format!("http://{user}:{pass}@{rest}")
+                    format!("http://{enc_user}:{enc_pass}@{rest}")
                 } else if let Some(rest) = self.url.strip_prefix("https://") {
-                    format!("https://{user}:{pass}@{rest}")
+                    format!("https://{enc_user}:{enc_pass}@{rest}")
                 } else if let Some(rest) = self.url.strip_prefix("socks5://") {
-                    format!("socks5://{user}:{pass}@{rest}")
+                    format!("socks5://{enc_user}:{enc_pass}@{rest}")
                 } else {
                     self.url.clone()
                 }
@@ -215,6 +220,14 @@ impl ProxyConfig {
         }
     }
 
+    /// Returns the proxy entries in insertion order.
+    ///
+    /// Useful when building a parallel data structure (e.g., one client per
+    /// proxy) that must stay aligned with [`next_index`](Self::next_index).
+    pub fn entries(&self) -> &[ProxyEntry] {
+        &self.proxies
+    }
+
     /// Number of proxies in the pool.
     pub fn len(&self) -> usize {
         self.proxies.len()
@@ -236,17 +249,29 @@ impl Clone for ProxyConfig {
     }
 }
 
-/// Simple random index without pulling in the `rand` crate.
-fn random_index(len: usize) -> usize {
-    let mut x = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos() as u64;
-    // xorshift64
-    x ^= x << 13;
-    x ^= x >> 7;
-    x ^= x << 17;
-    (x as usize) % len
+/// Percent-encode a string for use in the userinfo part of a URL (RFC 3986 §3.2.1).
+///
+/// Unreserved characters and sub-delims are left as-is; everything else
+/// (including `@`, `:`, `/`, `%`) is percent-encoded.
+fn percent_encode_userinfo(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for &byte in s.as_bytes() {
+        match byte {
+            // unreserved (RFC 3986)
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                out.push(byte as char);
+            }
+            // sub-delims (RFC 3986)
+            b'!' | b'$' | b'&' | b'\'' | b'(' | b')' | b'*' | b'+' | b',' | b';' | b'=' => {
+                out.push(byte as char);
+            }
+            _ => {
+                // Everything else — includes @, :, /, %, space, etc.
+                out.push_str(&format!("%{byte:02X}"));
+            }
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -294,6 +319,15 @@ mod tests {
 
         let entry = ProxyEntry::with_auth("socks5://proxy:1080", "u", "p");
         assert_eq!(entry.authenticated_url(), "socks5://u:p@proxy:1080");
+    }
+
+    #[test]
+    fn authenticated_url_encodes_special_chars() {
+        let entry = ProxyEntry::with_auth("http://proxy:8080", "user@org", "p@ss:word/1");
+        assert_eq!(
+            entry.authenticated_url(),
+            "http://user%40org:p%40ss%3Aword%2F1@proxy:8080"
+        );
     }
 
     #[test]

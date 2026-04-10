@@ -3,6 +3,8 @@
 //! Provides a curated pool of browser User-Agent strings that can be
 //! rotated per-request to avoid fingerprinting based on static UA headers.
 
+use ares_core::rand::random_index;
+
 /// Curated pool of realistic, recent browser User-Agent strings.
 ///
 /// Covers Chrome, Firefox, Safari, and Edge across Windows, macOS, and Linux.
@@ -53,19 +55,6 @@ impl UserAgentPool {
     pub fn next(&self) -> &'static str {
         USER_AGENTS[random_index(USER_AGENTS.len())]
     }
-}
-
-/// Simple random index without pulling in the `rand` crate.
-fn random_index(len: usize) -> usize {
-    let mut x = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos() as u64;
-    // xorshift64
-    x ^= x << 13;
-    x ^= x >> 7;
-    x ^= x << 17;
-    (x as usize) % len
 }
 
 #[cfg(test)]

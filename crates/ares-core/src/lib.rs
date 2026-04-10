@@ -8,6 +8,7 @@ pub mod job;
 pub mod job_queue;
 pub mod models;
 pub mod proxy;
+pub mod rand;
 pub mod schema;
 pub mod scrape;
 pub mod stealth;

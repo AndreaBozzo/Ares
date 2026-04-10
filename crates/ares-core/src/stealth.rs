@@ -1,13 +1,16 @@
 //! Browser stealth configuration for anti-bot evasion.
 //!
 //! Controls which fingerprint-obfuscation techniques are applied when
-//! using the headless browser fetcher.  All features are **opt-in** —
-//! the default `StealthConfig` enables everything, but callers can
-//! selectively disable individual techniques.
+//! using the headless browser fetcher. All features are **opt-in** —
+//! the default `StealthConfig` disables all techniques, and callers can
+//! selectively enable individual techniques or use [`StealthConfig::full`]
+//! to enable everything.
+
+use crate::rand::random_index;
 
 /// Configuration for browser stealth / anti-fingerprinting.
 ///
-/// When enabled, the [`BrowserFetcher`](crate::traits::Fetcher) will apply
+/// When enabled, a browser-based [`Fetcher`](crate::traits::Fetcher) will apply
 /// these techniques on each new page before navigation completes.
 #[derive(Debug, Clone)]
 pub struct StealthConfig {
@@ -91,7 +94,7 @@ pub fn platform_for_ua(ua: &str) -> &'static str {
     } else if ua.contains("Linux") && !ua.contains("Android") {
         "Linux x86_64"
     } else if ua.contains("Android") {
-        "Linux armv81"
+        "Linux armv8l"
     } else if ua.contains("iPhone") {
         "iPhone"
     } else {
@@ -112,18 +115,6 @@ const LANGUAGE_SETS: &[&str] = &[
 /// Pick a random `navigator.languages` JSON array string.
 pub fn random_languages() -> &'static str {
     LANGUAGE_SETS[random_index(LANGUAGE_SETS.len())]
-}
-
-/// Simple random index without pulling in the `rand` crate.
-fn random_index(len: usize) -> usize {
-    let mut x = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos() as u64;
-    x ^= x << 13;
-    x ^= x >> 7;
-    x ^= x << 17;
-    (x as usize) % len
 }
 
 #[cfg(test)]
@@ -172,7 +163,7 @@ mod tests {
         );
         assert_eq!(
             platform_for_ua("Mozilla/5.0 (Linux; Android 14; Pixel 8)"),
-            "Linux armv81"
+            "Linux armv8l"
         );
         assert_eq!(
             platform_for_ua("Mozilla/5.0 (iPhone; CPU iPhone OS 18_1)"),

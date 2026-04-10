@@ -74,11 +74,12 @@ impl ReqwestFetcher {
     /// Configure proxy rotation.
     ///
     /// Pre-builds one `reqwest::Client` per proxy for connection reuse.
+    /// Clients are built in insertion order so that `clients[i]` always
+    /// corresponds to `proxies[i]`, regardless of rotation strategy.
     pub fn with_proxies(mut self, config: ProxyConfig) -> Result<Self, AppError> {
         let mut clients = Vec::with_capacity(config.len());
-        for _ in 0..config.len() {
-            let proxy = config.next();
-            let client = build_client(self.timeout, Some(proxy), self.tls_backend)?;
+        for entry in config.entries() {
+            let client = build_client(self.timeout, Some(entry), self.tls_backend)?;
             clients.push(client);
         }
         self.proxy_clients = Some(Arc::new(ProxyClients { config, clients }));

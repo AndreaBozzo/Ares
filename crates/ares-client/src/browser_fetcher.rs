@@ -123,7 +123,7 @@ impl BrowserFetcher {
 
         if let Some(proxy) = proxy_url {
             builder = builder.arg(format!("--proxy-server={proxy}"));
-            tracing::info!("Browser using proxy: {proxy}");
+            tracing::info!("Browser using configured proxy");
         }
 
         let config = builder
@@ -272,35 +272,47 @@ impl Fetcher for BrowserFetcher {
             || self.stealth.spoof_languages
             || self.stealth.spoof_platform;
 
-        let result =
-            tokio::time::timeout(timeout, async {
-                // Open a new tab and navigate to the URL.
-                let page = self.browser.new_page(url).await.map_err(|e| {
+        let result = tokio::time::timeout(timeout, async {
+            if has_stealth {
+                // Open a blank tab, apply stealth injections, then navigate.
+                // This ensures AddScriptToEvaluateOnNewDocument hooks fire
+                // before any site JavaScript on the target page.
+                let page =
+                    self.browser.new_page("about:blank").await.map_err(|e| {
+                        AppError::HttpError(format!("Failed to open blank page: {e}"))
+                    })?;
+                self.apply_stealth(&page).await?;
+                page.goto(url).await.map_err(|e| {
                     AppError::HttpError(format!("Failed to navigate to {url}: {e}"))
                 })?;
 
-                // Apply stealth injections before waiting for content.
-                if has_stealth {
-                    self.apply_stealth(&page).await?;
-                }
-
-                // Wait until <body> is present — a minimal signal that the page
-                // has rendered its main content.
                 page.find_element("body")
                     .await
                     .map_err(|e| AppError::HttpError(format!("Page did not render body: {e}")))?;
 
-                // Grab the fully-rendered DOM.
                 let html = page.content().await.map_err(|e| {
                     AppError::HttpError(format!("Failed to read page content: {e}"))
                 })?;
-
-                // Close the tab to free browser resources.
                 let _ = page.close().await;
-
                 Ok::<String, AppError>(html)
-            })
-            .await;
+            } else {
+                // No stealth — navigate directly.
+                let page = self.browser.new_page(url).await.map_err(|e| {
+                    AppError::HttpError(format!("Failed to navigate to {url}: {e}"))
+                })?;
+
+                page.find_element("body")
+                    .await
+                    .map_err(|e| AppError::HttpError(format!("Page did not render body: {e}")))?;
+
+                let html = page.content().await.map_err(|e| {
+                    AppError::HttpError(format!("Failed to read page content: {e}"))
+                })?;
+                let _ = page.close().await;
+                Ok::<String, AppError>(html)
+            }
+        })
+        .await;
 
         match result {
             Ok(inner) => inner,
