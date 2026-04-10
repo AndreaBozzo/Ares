@@ -1,10 +1,14 @@
 use std::net::IpAddr;
+use std::sync::Arc;
 use std::time::Duration;
 
 use ares_core::error::AppError;
+use ares_core::proxy::ProxyConfig;
 use ares_core::traits::Fetcher;
 use reqwest::Client;
 use url::Url;
+
+use crate::user_agent::UserAgentPool;
 
 /// HTTP fetcher using reqwest.
 ///
@@ -12,11 +16,26 @@ use url::Url;
 /// By default, SSRF protection is **enabled** — requests to private/reserved
 /// IP ranges are blocked. Use [`allow_private_urls`](Self::allow_private_urls)
 /// to disable this (e.g., for CLI usage where the user controls the machine).
+///
+/// Supports optional proxy rotation and User-Agent rotation for anti-bot evasion.
 #[derive(Clone)]
 pub struct ReqwestFetcher {
+    /// Direct (no-proxy) client — used when no proxy pool is configured,
+    /// or as a fallback.
     client: Client,
-    timeout_secs: u64,
+    timeout: Duration,
     ssrf_protection: bool,
+    /// Pre-built clients, one per proxy in the pool. Rotating through these
+    /// reuses connections per proxy while distributing requests across exit IPs.
+    proxy_clients: Option<Arc<ProxyClients>>,
+    /// If set, override the default User-Agent with a random one per request.
+    ua_pool: Option<UserAgentPool>,
+}
+
+/// Holds the proxy pool and pre-built reqwest clients for each proxy.
+struct ProxyClients {
+    config: ProxyConfig,
+    clients: Vec<Client>,
 }
 
 impl ReqwestFetcher {
@@ -25,18 +44,35 @@ impl ReqwestFetcher {
     }
 
     pub fn with_timeout(timeout: Duration) -> Result<Self, AppError> {
-        let timeout_secs = timeout.as_secs();
-        let client = Client::builder()
-            .user_agent("Ares/0.2 (AI Scraper)")
-            .timeout(timeout)
-            .build()
-            .map_err(|e| AppError::HttpError(e.to_string()))?;
+        let client = build_client(timeout, None)?;
 
         Ok(Self {
             client,
-            timeout_secs,
+            timeout,
             ssrf_protection: true,
+            proxy_clients: None,
+            ua_pool: None,
         })
+    }
+
+    /// Configure proxy rotation.
+    ///
+    /// Pre-builds one `reqwest::Client` per proxy for connection reuse.
+    pub fn with_proxies(mut self, config: ProxyConfig) -> Result<Self, AppError> {
+        let mut clients = Vec::with_capacity(config.len());
+        for _ in 0..config.len() {
+            let proxy = config.next();
+            let client = build_client(self.timeout, Some(proxy))?;
+            clients.push(client);
+        }
+        self.proxy_clients = Some(Arc::new(ProxyClients { config, clients }));
+        Ok(self)
+    }
+
+    /// Enable User-Agent rotation using a built-in pool of realistic browser UAs.
+    pub fn with_random_ua(mut self) -> Self {
+        self.ua_pool = Some(UserAgentPool);
+        self
     }
 
     /// Disable SSRF protection, allowing requests to private/reserved IPs.
@@ -46,6 +82,40 @@ impl ReqwestFetcher {
         self.ssrf_protection = false;
         self
     }
+
+    /// Select the client and optional UA override for the next request.
+    fn next_client(&self) -> (&Client, Option<&'static str>) {
+        let ua = self.ua_pool.as_ref().map(|pool| pool.next());
+        match &self.proxy_clients {
+            Some(pc) => {
+                let idx = pc.config.next_index();
+                (&pc.clients[idx], ua)
+            }
+            None => (&self.client, ua),
+        }
+    }
+}
+
+/// Build a reqwest::Client with optional proxy.
+fn build_client(
+    timeout: Duration,
+    proxy_entry: Option<&ares_core::proxy::ProxyEntry>,
+) -> Result<Client, AppError> {
+    let mut builder = Client::builder()
+        .user_agent("Ares/0.2 (AI Scraper)")
+        .timeout(timeout);
+
+    if let Some(entry) = proxy_entry {
+        let proxy_url = entry.authenticated_url();
+        let proxy = reqwest::Proxy::all(&proxy_url).map_err(|e| {
+            AppError::ConfigError(format!("Invalid proxy URL '{}': {e}", entry.url))
+        })?;
+        builder = builder.proxy(proxy);
+    }
+
+    builder
+        .build()
+        .map_err(|e| AppError::HttpError(e.to_string()))
 }
 
 impl Fetcher for ReqwestFetcher {
@@ -54,9 +124,16 @@ impl Fetcher for ReqwestFetcher {
             validate_url(url).await?;
         }
 
-        let response = self.client.get(url).send().await.map_err(|e| {
+        let (client, ua_override) = self.next_client();
+
+        let mut request = client.get(url);
+        if let Some(ua) = ua_override {
+            request = request.header(reqwest::header::USER_AGENT, ua);
+        }
+
+        let response = request.send().await.map_err(|e| {
             if e.is_timeout() {
-                AppError::Timeout(self.timeout_secs)
+                AppError::Timeout(self.timeout.as_secs())
             } else if e.is_connect() {
                 AppError::NetworkError(format!("Connection failed: {e}"))
             } else {

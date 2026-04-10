@@ -100,8 +100,16 @@ pub async fn scrape(
     // Validate schema
     ares_core::validate_schema(&body.schema)?;
 
-    // Build pipeline components
-    let fetcher = ReqwestFetcher::new()?;
+    // Build pipeline components — apply server-level proxy + UA rotation
+    let mut fetcher = ReqwestFetcher::new()?;
+    if let Some(ref pc) = state.proxy_config {
+        fetcher = fetcher
+            .with_proxies(pc.clone())
+            .map_err(|e| ares_core::AppError::ConfigError(format!("proxy config: {e}")))?;
+    }
+    if state.random_ua {
+        fetcher = fetcher.with_random_ua();
+    }
     let cleaner = HtmdCleaner::new();
     let extractor = OpenAiExtractor::with_base_url(&api_key, &model, &base_url)?;
 

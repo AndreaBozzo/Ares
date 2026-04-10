@@ -13,6 +13,7 @@ use ares_client::{
 use ares_core::circuit_breaker::{CircuitBreaker, CircuitBreakerConfig};
 use ares_core::job::{CreateScrapeJobRequest, JobStatus, WorkerConfig};
 use ares_core::job_queue::JobQueue;
+use ares_core::proxy::{ProxyConfig, ProxyEntry, RotationStrategy};
 use ares_core::traits::Fetcher;
 use ares_core::worker::{TracingWorkerReporter, WorkerService};
 use ares_core::{
@@ -28,14 +29,18 @@ use output::{OutputFormat, OutputFormatter};
 // Fetcher creation — shared by Scrape and Worker commands.
 // ---------------------------------------------------------------------------
 
-/// Creates a fetcher (browser or reqwest, with optional throttle wrapping)
-/// and passes it to a generic async body. Uses a macro because `Fetcher`
-/// is not object-safe (returns `impl Future`).
+/// Creates a fetcher (browser or reqwest, with optional throttle wrapping,
+/// proxy rotation, and User-Agent rotation) and passes it to a generic
+/// async body. Uses a macro because `Fetcher` is not object-safe
+/// (returns `impl Future`).
 macro_rules! with_fetcher {
-    ($browser:expr, $timeout:expr, $throttle:expr, |$f:ident| $body:expr) => {{
+    ($browser:expr, $timeout:expr, $throttle:expr, $proxy:expr, $random_ua:expr, |$f:ident| $body:expr) => {{
         async {
             if $browser {
-                let base = create_browser_fetcher($timeout).await?;
+                let proxy_url: Option<String> = $proxy
+                    .as_ref()
+                    .map(|pc: &ProxyConfig| pc.next().authenticated_url());
+                let base = create_browser_fetcher($timeout, proxy_url.as_deref()).await?;
                 match $throttle.filter(|&ms| ms > 0) {
                     Some(ms) => {
                         let $f = ThrottledFetcher::new(
@@ -50,12 +55,22 @@ macro_rules! with_fetcher {
                     }
                 }
             } else {
-                let base = match $timeout {
+                let mut base = match $timeout {
                     Some(t) => ReqwestFetcher::with_timeout(t),
                     None => ReqwestFetcher::new(),
                 }
                 .context("Failed to create HTTP client")?
                 .allow_private_urls();
+
+                if let Some(proxy_config) = $proxy {
+                    base = base
+                        .with_proxies(proxy_config)
+                        .context("Failed to configure proxies")?;
+                }
+                if $random_ua {
+                    base = base.with_random_ua();
+                }
+
                 match $throttle.filter(|&ms| ms > 0) {
                     Some(ms) => {
                         let $f = ThrottledFetcher::new(
@@ -141,6 +156,22 @@ enum Commands {
         /// Per-domain throttle delay in milliseconds (e.g., 1000 for 1s between requests)
         #[arg(long)]
         throttle: Option<u64>,
+
+        /// Proxy URL (http, https, or socks5)
+        #[arg(long, env = "ARES_PROXY")]
+        proxy: Option<String>,
+
+        /// Path to a file with one proxy URL per line
+        #[arg(long, env = "ARES_PROXY_FILE")]
+        proxy_file: Option<String>,
+
+        /// Proxy rotation strategy (round-robin or random)
+        #[arg(long, default_value = "round-robin")]
+        proxy_rotation: String,
+
+        /// Rotate User-Agent header with realistic browser strings
+        #[arg(long, default_value_t = false)]
+        random_ua: bool,
 
         /// Disable in-memory caching
         #[arg(long, default_value_t = false)]
@@ -228,6 +259,22 @@ enum Commands {
         /// Per-domain throttle delay in milliseconds (e.g., 1000 for 1s between requests)
         #[arg(long)]
         throttle: Option<u64>,
+
+        /// Proxy URL (http, https, or socks5)
+        #[arg(long, env = "ARES_PROXY")]
+        proxy: Option<String>,
+
+        /// Path to a file with one proxy URL per line
+        #[arg(long, env = "ARES_PROXY_FILE")]
+        proxy_file: Option<String>,
+
+        /// Proxy rotation strategy (round-robin or random)
+        #[arg(long, default_value = "round-robin")]
+        proxy_rotation: String,
+
+        /// Rotate User-Agent header with realistic browser strings
+        #[arg(long, default_value_t = false)]
+        random_ua: bool,
 
         /// Disable in-memory caching
         #[arg(long, default_value_t = false)]
@@ -393,6 +440,10 @@ async fn main() -> Result<()> {
             system_prompt,
             skip_unchanged,
             throttle,
+            proxy,
+            proxy_file,
+            proxy_rotation,
+            random_ua,
             no_cache,
             cache_ttl,
             format,
@@ -403,6 +454,7 @@ async fn main() -> Result<()> {
             let schema_value = resolved.schema;
 
             let fetch_timeout = fetch_timeout.map(Duration::from_secs);
+            let proxy_config = build_proxy_config(proxy, proxy_file, &proxy_rotation)?;
             let opts = ScrapeOpts {
                 url: &url,
                 schema_value,
@@ -419,8 +471,14 @@ async fn main() -> Result<()> {
                 format,
             };
 
-            with_fetcher!(browser, fetch_timeout, throttle, |f| cmd_scrape(f, opts)
-                .await)
+            with_fetcher!(
+                browser,
+                fetch_timeout,
+                throttle,
+                proxy_config,
+                random_ua,
+                |f| cmd_scrape(f, opts).await
+            )
             .await?;
         }
 
@@ -577,9 +635,14 @@ async fn main() -> Result<()> {
             system_prompt,
             skip_unchanged,
             throttle,
+            proxy,
+            proxy_file,
+            proxy_rotation,
+            random_ua,
             no_cache,
             cache_ttl,
         } => {
+            let proxy_config = build_proxy_config(proxy, proxy_file, &proxy_rotation)?;
             let worker_opts = WorkerOpts {
                 api_key: &api_key,
                 worker_id,
@@ -592,9 +655,14 @@ async fn main() -> Result<()> {
                 cache_ttl,
             };
 
-            with_fetcher!(browser, worker_opts.fetch_timeout, throttle, |f| {
-                cmd_worker(f, worker_opts).await
-            })
+            with_fetcher!(
+                browser,
+                worker_opts.fetch_timeout,
+                throttle,
+                proxy_config,
+                random_ua,
+                |f| { cmd_worker(f, worker_opts).await }
+            )
             .await?;
         }
 
@@ -705,6 +773,45 @@ async fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Proxy config builder — shared by Scrape and Worker commands.
+// ---------------------------------------------------------------------------
+
+/// Build a `ProxyConfig` from CLI flags (`--proxy` and/or `--proxy-file`).
+///
+/// Returns `None` when neither flag is set.
+fn build_proxy_config(
+    proxy: Option<String>,
+    proxy_file: Option<String>,
+    rotation: &str,
+) -> Result<Option<ProxyConfig>> {
+    let strategy: RotationStrategy = rotation
+        .parse()
+        .map_err(|e: String| anyhow::anyhow!("{e}"))?;
+
+    let mut entries: Vec<ProxyEntry> = Vec::new();
+
+    if let Some(url) = proxy {
+        entries.push(ProxyEntry::new(url));
+    }
+
+    if let Some(path) = proxy_file {
+        let content = std::fs::read_to_string(&path)
+            .with_context(|| format!("Failed to read proxy file: {path}"))?;
+        for line in content.lines().map(str::trim) {
+            if !line.is_empty() && !line.starts_with('#') {
+                entries.push(ProxyEntry::new(line));
+            }
+        }
+    }
+
+    if entries.is_empty() {
+        return Ok(None);
+    }
+
+    Ok(Some(ProxyConfig::new(entries, strategy)))
 }
 
 // ---------------------------------------------------------------------------
@@ -861,15 +968,19 @@ async fn cmd_worker<F: Fetcher>(fetcher: F, opts: WorkerOpts<'_>) -> Result<()> 
 // ---------------------------------------------------------------------------
 
 #[cfg(feature = "browser")]
-async fn create_browser_fetcher(timeout: Option<Duration>) -> Result<ares_client::BrowserFetcher> {
-    Ok(match timeout {
-        Some(t) => ares_client::BrowserFetcher::with_timeout(t).await?,
-        None => ares_client::BrowserFetcher::new().await?,
-    })
+async fn create_browser_fetcher(
+    timeout: Option<Duration>,
+    proxy_url: Option<&str>,
+) -> Result<ares_client::BrowserFetcher> {
+    let timeout = timeout.unwrap_or(Duration::from_secs(30));
+    Ok(ares_client::BrowserFetcher::with_timeout_and_proxy(timeout, proxy_url).await?)
 }
 
 #[cfg(not(feature = "browser"))]
-async fn create_browser_fetcher(_timeout: Option<Duration>) -> Result<ReqwestFetcher> {
+async fn create_browser_fetcher(
+    _timeout: Option<Duration>,
+    _proxy_url: Option<&str>,
+) -> Result<ReqwestFetcher> {
     anyhow::bail!(
         "--browser requires the `browser` feature.\n\
          Rebuild with: cargo build --features browser"

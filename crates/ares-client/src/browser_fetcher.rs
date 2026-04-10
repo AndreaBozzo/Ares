@@ -42,11 +42,32 @@ impl BrowserFetcher {
     /// Requires a Chromium / Chrome binary reachable via `$PATH` (or the
     /// default locations checked by `chromiumoxide`).
     pub async fn new() -> Result<Self, AppError> {
-        Self::with_timeout(Duration::from_secs(30)).await
+        Self::launch(Duration::from_secs(30), None).await
     }
 
     /// Launches a headless Chromium browser with a custom navigation timeout.
     pub async fn with_timeout(timeout: Duration) -> Result<Self, AppError> {
+        Self::launch(timeout, None).await
+    }
+
+    /// Launches a headless Chromium browser that routes traffic through a proxy.
+    ///
+    /// The proxy URL is passed as `--proxy-server=<url>` to Chromium.
+    /// Supports HTTP, HTTPS, and SOCKS5 proxies.
+    pub async fn with_proxy(proxy_url: &str) -> Result<Self, AppError> {
+        Self::launch(Duration::from_secs(30), Some(proxy_url)).await
+    }
+
+    /// Launches a headless Chromium browser with a custom timeout and proxy.
+    pub async fn with_timeout_and_proxy(
+        timeout: Duration,
+        proxy_url: Option<&str>,
+    ) -> Result<Self, AppError> {
+        Self::launch(timeout, proxy_url).await
+    }
+
+    /// Internal launcher shared by all constructors.
+    async fn launch(timeout: Duration, proxy_url: Option<&str>) -> Result<Self, AppError> {
         let mut builder = BrowserConfig::builder();
         builder = builder.no_sandbox().disable_default_args();
 
@@ -60,14 +81,21 @@ impl BrowserFetcher {
             builder = builder.chrome_executable(bin);
         }
 
-        let config = builder
+        builder = builder
             .arg("--headless=new")
             .arg("--disable-gpu")
             .arg("--disable-dev-shm-usage")
             .arg("--disable-extensions")
             .arg("--disable-popup-blocking")
             .arg("--disable-translate")
-            .arg("--no-first-run")
+            .arg("--no-first-run");
+
+        if let Some(proxy) = proxy_url {
+            builder = builder.arg(format!("--proxy-server={proxy}"));
+            tracing::info!("Browser using proxy: {proxy}");
+        }
+
+        let config = builder
             .build()
             .map_err(|e| AppError::Generic(format!("Browser config error: {e}")))?;
 

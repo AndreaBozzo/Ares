@@ -6,7 +6,6 @@ use crate::error::AppError;
 use crate::models::{Extraction, NewExtraction};
 
 /// Fetches raw HTML content from a URL.
-// TODO(#1): Add proxy support via ProxyConfig parameter
 pub trait Fetcher: Send + Sync + Clone {
     fn fetch(&self, url: &str) -> impl Future<Output = Result<String, AppError>> + Send;
 }

@@ -38,6 +38,8 @@ pub async fn setup_test_app() -> TestApp {
         db,
         admin_token: Some(TEST_API_KEY.to_string()),
         schemas_dir: schemas_dir.clone(),
+        proxy_config: None,
+        random_ua: false,
     });
 
     TestApp {
@@ -63,6 +65,8 @@ pub async fn setup_test_app_no_auth() -> TestApp {
         db,
         admin_token: None,
         schemas_dir,
+        proxy_config: None,
+        random_ua: false,
     });
 
     TestApp {

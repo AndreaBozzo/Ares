@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use ares_core::proxy::ProxyConfig;
 use ares_db::Database;
 
 /// Shared application state, available to all route handlers via `State<Arc<AppState>>`.
@@ -9,4 +10,8 @@ pub struct AppState {
     pub admin_token: Option<String>,
     /// Path to the schemas directory for schema resolution.
     pub schemas_dir: PathBuf,
+    /// Server-level proxy rotation config (set via `ARES_PROXY` / `ARES_PROXY_FILE` env vars).
+    pub proxy_config: Option<ProxyConfig>,
+    /// Whether to rotate User-Agent headers (set via `ARES_RANDOM_UA=true`).
+    pub random_ua: bool,
 }
