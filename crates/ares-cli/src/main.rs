@@ -661,7 +661,7 @@ async fn main() -> Result<()> {
                 throttle,
                 proxy_config,
                 random_ua,
-                |f| { cmd_worker(f, worker_opts).await }
+                |f| cmd_worker(f, worker_opts).await
             )
             .await?;
         }
