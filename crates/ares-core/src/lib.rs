@@ -10,6 +10,7 @@ pub mod models;
 pub mod proxy;
 pub mod schema;
 pub mod scrape;
+pub mod stealth;
 pub mod throttle;
 pub mod traits;
 pub mod worker;
@@ -24,11 +25,12 @@ pub use error::AppError;
 pub use job::{CreateScrapeJobRequest, JobStatus, RetryConfig, ScrapeJob, WorkerConfig};
 pub use job_queue::JobQueue;
 pub use models::{Extraction, ExtractionSchema, NewExtraction, ScrapeResult, compute_hash};
-pub use proxy::{ProxyConfig, ProxyEntry, RotationStrategy};
+pub use proxy::{ProxyConfig, ProxyEntry, RotationStrategy, TlsBackend};
 pub use schema::{
     ResolvedSchema, SchemaEntry, SchemaResolver, derive_schema_name, validate_schema,
 };
 pub use scrape::ScrapeService;
+pub use stealth::StealthConfig;
 pub use throttle::{ThrottleConfig, ThrottledFetcher};
 pub use traits::{
     Cleaner, ExtractionStore, Extractor, ExtractorFactory, Fetcher, LinkDiscoverer,

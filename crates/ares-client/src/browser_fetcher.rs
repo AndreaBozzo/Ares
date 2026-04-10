@@ -3,9 +3,14 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use ares_core::error::AppError;
+use ares_core::stealth::{self, StealthConfig};
 use ares_core::traits::Fetcher;
-use chromiumoxide::{Browser, BrowserConfig};
+use chromiumoxide::cdp::browser_protocol::emulation::SetDeviceMetricsOverrideParams;
+use chromiumoxide::cdp::browser_protocol::page::AddScriptToEvaluateOnNewDocumentParams;
+use chromiumoxide::{Browser, BrowserConfig, Page};
 use futures::StreamExt;
+
+use crate::user_agent::UserAgentPool;
 
 /// Headless-browser fetcher using Chromium via the Chrome DevTools Protocol.
 ///
@@ -16,6 +21,19 @@ use futures::StreamExt;
 /// A single Chromium process is shared across all clones of this struct;
 /// each [`Fetcher::fetch`] call opens a new tab, grabs the rendered HTML,
 /// and closes the tab.
+///
+/// # Stealth mode
+///
+/// When a [`StealthConfig`] is provided, each new page gets anti-fingerprinting
+/// injections before any site script executes:
+///
+/// - `navigator.webdriver` hidden
+/// - `window.chrome` faked
+/// - WebGL vendor/renderer obfuscated
+/// - Browser plugins and permissions spoofed
+/// - User-Agent rotated per page
+/// - Viewport dimensions randomised
+/// - `navigator.platform` and `navigator.languages` overridden
 ///
 /// # Example
 ///
@@ -34,6 +52,8 @@ use futures::StreamExt;
 pub struct BrowserFetcher {
     browser: Arc<Browser>,
     timeout: Duration,
+    stealth: StealthConfig,
+    ua_pool: Option<UserAgentPool>,
 }
 
 impl BrowserFetcher {
@@ -64,6 +84,17 @@ impl BrowserFetcher {
         proxy_url: Option<&str>,
     ) -> Result<Self, AppError> {
         Self::launch(timeout, proxy_url).await
+    }
+
+    /// Enable stealth mode on this fetcher.
+    ///
+    /// Anti-fingerprinting techniques will be applied to every new page.
+    pub fn with_stealth(mut self, config: StealthConfig) -> Self {
+        if config.rotate_user_agent {
+            self.ua_pool = Some(UserAgentPool);
+        }
+        self.stealth = config;
+        self
     }
 
     /// Internal launcher shared by all constructors.
@@ -116,7 +147,90 @@ impl BrowserFetcher {
         Ok(Self {
             browser: Arc::new(browser),
             timeout,
+            stealth: StealthConfig::default(),
+            ua_pool: None,
         })
+    }
+
+    /// Apply stealth injections to a freshly-opened page.
+    ///
+    /// Must be called *before* navigating to the target URL so that
+    /// `AddScriptToEvaluateOnNewDocument` hooks fire before site JS.
+    async fn apply_stealth(&self, page: &Page) -> Result<(), AppError> {
+        let map_err = |e| AppError::HttpError(format!("Stealth injection failed: {e}"));
+
+        // 1. Core stealth: webdriver, chrome, WebGL, plugins, permissions
+        if self.stealth.hide_webdriver {
+            page.enable_stealth_mode_with_agent("")
+                .await
+                .map_err(map_err)?;
+        }
+
+        // 2. User-Agent override (rotated per page)
+        let ua = if self.stealth.rotate_user_agent {
+            let ua = self.ua_pool.as_ref().map(|p| p.next()).unwrap_or(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+            );
+            page.set_user_agent(ua).await.map_err(map_err)?;
+            Some(ua)
+        } else {
+            None
+        };
+
+        // 3. Viewport randomization
+        if self.stealth.randomize_viewport {
+            let (width, height) = stealth::random_viewport();
+            page.execute(SetDeviceMetricsOverrideParams {
+                width: width as i64,
+                height: height as i64,
+                device_scale_factor: 1.0,
+                mobile: false,
+                scale: None,
+                screen_width: Some(width as i64),
+                screen_height: Some(height as i64),
+                position_x: None,
+                position_y: None,
+                dont_set_visible_size: None,
+                screen_orientation: None,
+                viewport: None,
+            })
+            .await
+            .map_err(map_err)?;
+        }
+
+        // 4. navigator.platform spoofing
+        if self.stealth.spoof_platform {
+            let platform = ua.map(stealth::platform_for_ua).unwrap_or("Win32");
+            page.execute(AddScriptToEvaluateOnNewDocumentParams {
+                source: format!(
+                    "Object.defineProperty(navigator, 'platform', {{ get: () => '{}' }});",
+                    platform
+                ),
+                world_name: None,
+                include_command_line_api: None,
+                run_immediately: None,
+            })
+            .await
+            .map_err(map_err)?;
+        }
+
+        // 5. navigator.languages spoofing
+        if self.stealth.spoof_languages {
+            let languages = stealth::random_languages();
+            page.execute(AddScriptToEvaluateOnNewDocumentParams {
+                source: format!(
+                    "Object.defineProperty(navigator, 'languages', {{ get: () => {} }});",
+                    languages
+                ),
+                world_name: None,
+                include_command_line_api: None,
+                run_immediately: None,
+            })
+            .await
+            .map_err(map_err)?;
+        }
+
+        Ok(())
     }
 
     /// Tries to locate the real Chrome/Chromium binary.
@@ -154,6 +268,11 @@ impl BrowserFetcher {
 impl Fetcher for BrowserFetcher {
     async fn fetch(&self, url: &str) -> Result<String, AppError> {
         let timeout = self.timeout;
+        let has_stealth = self.stealth.hide_webdriver
+            || self.stealth.rotate_user_agent
+            || self.stealth.randomize_viewport
+            || self.stealth.spoof_languages
+            || self.stealth.spoof_platform;
 
         let result =
             tokio::time::timeout(timeout, async {
@@ -161,6 +280,11 @@ impl Fetcher for BrowserFetcher {
                 let page = self.browser.new_page(url).await.map_err(|e| {
                     AppError::HttpError(format!("Failed to navigate to {url}: {e}"))
                 })?;
+
+                // Apply stealth injections before waiting for content.
+                if has_stealth {
+                    self.apply_stealth(&page).await?;
+                }
 
                 // Wait until <body> is present — a minimal signal that the page
                 // has rendered its main content.

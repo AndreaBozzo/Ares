@@ -40,6 +40,9 @@ pub async fn setup_test_app() -> TestApp {
         schemas_dir: schemas_dir.clone(),
         proxy_config: None,
         random_ua: false,
+        browser: false,
+        stealth: false,
+        tls_backend: ares_core::proxy::TlsBackend::default(),
     });
 
     TestApp {
@@ -67,6 +70,9 @@ pub async fn setup_test_app_no_auth() -> TestApp {
         schemas_dir,
         proxy_config: None,
         random_ua: false,
+        browser: false,
+        stealth: false,
+        tls_backend: ares_core::proxy::TlsBackend::default(),
     });
 
     TestApp {

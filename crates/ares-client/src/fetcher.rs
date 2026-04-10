@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use ares_core::error::AppError;
-use ares_core::proxy::ProxyConfig;
+use ares_core::proxy::{ProxyConfig, TlsBackend};
 use ares_core::traits::Fetcher;
 use reqwest::Client;
 use url::Url;
@@ -30,6 +30,9 @@ pub struct ReqwestFetcher {
     proxy_clients: Option<Arc<ProxyClients>>,
     /// If set, override the default User-Agent with a random one per request.
     ua_pool: Option<UserAgentPool>,
+    /// TLS backend — stored so `with_proxies` can build per-proxy clients
+    /// with the same backend.
+    tls_backend: TlsBackend,
 }
 
 /// Holds the proxy pool and pre-built reqwest clients for each proxy.
@@ -44,7 +47,8 @@ impl ReqwestFetcher {
     }
 
     pub fn with_timeout(timeout: Duration) -> Result<Self, AppError> {
-        let client = build_client(timeout, None)?;
+        let tls_backend = TlsBackend::default();
+        let client = build_client(timeout, None, tls_backend)?;
 
         Ok(Self {
             client,
@@ -52,7 +56,19 @@ impl ReqwestFetcher {
             ssrf_protection: true,
             proxy_clients: None,
             ua_pool: None,
+            tls_backend,
         })
+    }
+
+    /// Set the TLS backend for fingerprint diversity.
+    ///
+    /// Must be called **before** [`with_proxies`](Self::with_proxies) so that
+    /// per-proxy clients use the same backend.
+    pub fn with_tls_backend(mut self, backend: TlsBackend) -> Result<Self, AppError> {
+        self.tls_backend = backend;
+        // Rebuild the direct client with the new backend.
+        self.client = build_client(self.timeout, None, backend)?;
+        Ok(self)
     }
 
     /// Configure proxy rotation.
@@ -62,7 +78,7 @@ impl ReqwestFetcher {
         let mut clients = Vec::with_capacity(config.len());
         for _ in 0..config.len() {
             let proxy = config.next();
-            let client = build_client(self.timeout, Some(proxy))?;
+            let client = build_client(self.timeout, Some(proxy), self.tls_backend)?;
             clients.push(client);
         }
         self.proxy_clients = Some(Arc::new(ProxyClients { config, clients }));
@@ -96,14 +112,25 @@ impl ReqwestFetcher {
     }
 }
 
-/// Build a reqwest::Client with optional proxy.
+/// Build a reqwest::Client with optional proxy and TLS backend selection.
 fn build_client(
     timeout: Duration,
     proxy_entry: Option<&ares_core::proxy::ProxyEntry>,
+    tls_backend: TlsBackend,
 ) -> Result<Client, AppError> {
     let mut builder = Client::builder()
         .user_agent("Ares/0.2 (AI Scraper)")
         .timeout(timeout);
+
+    // Select TLS backend — `Random` is resolved to a concrete choice per client.
+    match tls_backend.resolve() {
+        TlsBackend::Native => {
+            builder = builder.use_native_tls();
+        }
+        TlsBackend::Rustls | TlsBackend::Random => {
+            builder = builder.use_rustls_tls();
+        }
+    }
 
     if let Some(entry) = proxy_entry {
         let proxy_url = entry.authenticated_url();
@@ -307,6 +334,40 @@ mod tests {
         let result = validate_url("file:///etc/passwd").await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("not allowed"));
+    }
+
+    #[test]
+    fn fetcher_with_tls_native() {
+        let fetcher = ReqwestFetcher::new()
+            .unwrap()
+            .with_tls_backend(TlsBackend::Native)
+            .unwrap();
+        assert_eq!(fetcher.tls_backend, TlsBackend::Native);
+    }
+
+    #[test]
+    fn fetcher_with_tls_rustls() {
+        let fetcher = ReqwestFetcher::new()
+            .unwrap()
+            .with_tls_backend(TlsBackend::Rustls)
+            .unwrap();
+        assert_eq!(fetcher.tls_backend, TlsBackend::Rustls);
+    }
+
+    #[test]
+    fn fetcher_with_tls_random() {
+        // Random should resolve per-client; the stored value stays Random.
+        let fetcher = ReqwestFetcher::new()
+            .unwrap()
+            .with_tls_backend(TlsBackend::Random)
+            .unwrap();
+        assert_eq!(fetcher.tls_backend, TlsBackend::Random);
+    }
+
+    #[test]
+    fn fetcher_default_tls_is_rustls() {
+        let fetcher = ReqwestFetcher::new().unwrap();
+        assert_eq!(fetcher.tls_backend, TlsBackend::Rustls);
     }
 
     #[tokio::test]

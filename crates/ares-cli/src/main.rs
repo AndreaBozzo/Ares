@@ -13,7 +13,7 @@ use ares_client::{
 use ares_core::circuit_breaker::{CircuitBreaker, CircuitBreakerConfig};
 use ares_core::job::{CreateScrapeJobRequest, JobStatus, WorkerConfig};
 use ares_core::job_queue::JobQueue;
-use ares_core::proxy::{ProxyConfig, ProxyEntry, RotationStrategy};
+use ares_core::proxy::{ProxyConfig, ProxyEntry, RotationStrategy, TlsBackend};
 use ares_core::traits::Fetcher;
 use ares_core::worker::{TracingWorkerReporter, WorkerService};
 use ares_core::{
@@ -30,17 +30,17 @@ use output::{OutputFormat, OutputFormatter};
 // ---------------------------------------------------------------------------
 
 /// Creates a fetcher (browser or reqwest, with optional throttle wrapping,
-/// proxy rotation, and User-Agent rotation) and passes it to a generic
-/// async body. Uses a macro because `Fetcher` is not object-safe
-/// (returns `impl Future`).
+/// proxy rotation, User-Agent rotation, and browser stealth) and passes it
+/// to a generic async body. Uses a macro because `Fetcher` is not
+/// object-safe (returns `impl Future`).
 macro_rules! with_fetcher {
-    ($browser:expr, $timeout:expr, $throttle:expr, $proxy:expr, $random_ua:expr, |$f:ident| $body:expr) => {{
+    ($browser:expr, $timeout:expr, $throttle:expr, $proxy:expr, $random_ua:expr, $stealth:expr, $tls:expr, |$f:ident| $body:expr) => {{
         async {
             if $browser {
                 let proxy_url: Option<String> = $proxy
                     .as_ref()
                     .map(|pc: &ProxyConfig| pc.next().authenticated_url());
-                let base = create_browser_fetcher($timeout, proxy_url.as_deref()).await?;
+                let base = create_browser_fetcher($timeout, proxy_url.as_deref(), $stealth).await?;
                 match $throttle.filter(|&ms| ms > 0) {
                     Some(ms) => {
                         let $f = ThrottledFetcher::new(
@@ -60,6 +60,8 @@ macro_rules! with_fetcher {
                     None => ReqwestFetcher::new(),
                 }
                 .context("Failed to create HTTP client")?
+                .with_tls_backend($tls)
+                .context("Failed to set TLS backend")?
                 .allow_private_urls();
 
                 if let Some(proxy_config) = $proxy {
@@ -173,6 +175,15 @@ enum Commands {
         #[arg(long, default_value_t = false)]
         random_ua: bool,
 
+        /// Enable browser stealth mode (requires --browser): hides webdriver,
+        /// randomises viewport, spoofs navigator properties
+        #[arg(long, default_value_t = false)]
+        stealth: bool,
+
+        /// TLS backend for fingerprint diversity (rustls, native, random)
+        #[arg(long, env = "ARES_TLS_BACKEND", default_value = "rustls")]
+        tls_backend: String,
+
         /// Disable in-memory caching
         #[arg(long, default_value_t = false)]
         no_cache: bool,
@@ -275,6 +286,15 @@ enum Commands {
         /// Rotate User-Agent header with realistic browser strings
         #[arg(long, default_value_t = false)]
         random_ua: bool,
+
+        /// Enable browser stealth mode (requires --browser): hides webdriver,
+        /// randomises viewport, spoofs navigator properties
+        #[arg(long, default_value_t = false)]
+        stealth: bool,
+
+        /// TLS backend for fingerprint diversity (rustls, native, random)
+        #[arg(long, env = "ARES_TLS_BACKEND", default_value = "rustls")]
+        tls_backend: String,
 
         /// Disable in-memory caching
         #[arg(long, default_value_t = false)]
@@ -444,6 +464,8 @@ async fn main() -> Result<()> {
             proxy_file,
             proxy_rotation,
             random_ua,
+            stealth,
+            tls_backend,
             no_cache,
             cache_ttl,
             format,
@@ -455,6 +477,9 @@ async fn main() -> Result<()> {
 
             let fetch_timeout = fetch_timeout.map(Duration::from_secs);
             let proxy_config = build_proxy_config(proxy, proxy_file, &proxy_rotation)?;
+            let tls: TlsBackend = tls_backend
+                .parse()
+                .map_err(|e: String| anyhow::anyhow!("{e}"))?;
             let opts = ScrapeOpts {
                 url: &url,
                 schema_value,
@@ -477,6 +502,8 @@ async fn main() -> Result<()> {
                 throttle,
                 proxy_config,
                 random_ua,
+                stealth,
+                tls,
                 |f| cmd_scrape(f, opts).await
             )
             .await?;
@@ -639,10 +666,15 @@ async fn main() -> Result<()> {
             proxy_file,
             proxy_rotation,
             random_ua,
+            stealth,
+            tls_backend,
             no_cache,
             cache_ttl,
         } => {
             let proxy_config = build_proxy_config(proxy, proxy_file, &proxy_rotation)?;
+            let tls: TlsBackend = tls_backend
+                .parse()
+                .map_err(|e: String| anyhow::anyhow!("{e}"))?;
             let worker_opts = WorkerOpts {
                 api_key: &api_key,
                 worker_id,
@@ -661,6 +693,8 @@ async fn main() -> Result<()> {
                 throttle,
                 proxy_config,
                 random_ua,
+                stealth,
+                tls,
                 |f| cmd_worker(f, worker_opts).await
             )
             .await?;
@@ -971,15 +1005,23 @@ async fn cmd_worker<F: Fetcher>(fetcher: F, opts: WorkerOpts<'_>) -> Result<()> 
 async fn create_browser_fetcher(
     timeout: Option<Duration>,
     proxy_url: Option<&str>,
+    stealth: bool,
 ) -> Result<ares_client::BrowserFetcher> {
+    use ares_core::stealth::StealthConfig;
     let timeout = timeout.unwrap_or(Duration::from_secs(30));
-    Ok(ares_client::BrowserFetcher::with_timeout_and_proxy(timeout, proxy_url).await?)
+    let fetcher = ares_client::BrowserFetcher::with_timeout_and_proxy(timeout, proxy_url).await?;
+    Ok(if stealth {
+        fetcher.with_stealth(StealthConfig::full())
+    } else {
+        fetcher
+    })
 }
 
 #[cfg(not(feature = "browser"))]
 async fn create_browser_fetcher(
     _timeout: Option<Duration>,
     _proxy_url: Option<&str>,
+    _stealth: bool,
 ) -> Result<ReqwestFetcher> {
     anyhow::bail!(
         "--browser requires the `browser` feature.\n\

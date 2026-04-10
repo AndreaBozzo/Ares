@@ -5,6 +5,68 @@
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+/// TLS backend used by the HTTP client.
+///
+/// Different TLS implementations produce distinct ClientHello fingerprints
+/// (cipher suites, extensions, ALPN order), making requests harder to
+/// fingerprint by anti-bot systems.
+///
+/// - **Rustls** (default): pure-Rust TLS — consistent across platforms.
+/// - **Native**: platform TLS (OpenSSL on Linux, SChannel on Windows,
+///   SecureTransport on macOS) — different fingerprint from rustls.
+/// - **Random**: randomly pick one per client, maximising diversity.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum TlsBackend {
+    /// Use rustls (the default).
+    #[default]
+    Rustls,
+    /// Use the platform-native TLS stack (OpenSSL / SChannel / SecureTransport).
+    Native,
+    /// Randomly alternate between rustls and native-tls per client.
+    Random,
+}
+
+impl std::str::FromStr for TlsBackend {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "rustls" => Ok(Self::Rustls),
+            "native" | "native-tls" | "openssl" => Ok(Self::Native),
+            "random" | "rand" => Ok(Self::Random),
+            _ => Err(format!(
+                "Unknown TLS backend '{s}'. Expected: rustls, native, random"
+            )),
+        }
+    }
+}
+
+impl std::fmt::Display for TlsBackend {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Rustls => write!(f, "rustls"),
+            Self::Native => write!(f, "native"),
+            Self::Random => write!(f, "random"),
+        }
+    }
+}
+
+impl TlsBackend {
+    /// Resolve `Random` into a concrete backend.
+    pub fn resolve(self) -> Self {
+        match self {
+            Self::Random => {
+                if random_index(2) == 0 {
+                    Self::Rustls
+                } else {
+                    Self::Native
+                }
+            }
+            other => other,
+        }
+    }
+}
+
 /// A single proxy endpoint.
 #[derive(Debug, Clone)]
 pub struct ProxyEntry {
@@ -276,6 +338,49 @@ http://p3:8080
     #[should_panic(expected = "at least one proxy")]
     fn panics_on_empty_proxies() {
         ProxyConfig::new(vec![], RotationStrategy::RoundRobin);
+    }
+
+    #[test]
+    fn tls_backend_from_str() {
+        assert_eq!("rustls".parse::<TlsBackend>().unwrap(), TlsBackend::Rustls);
+        assert_eq!("native".parse::<TlsBackend>().unwrap(), TlsBackend::Native);
+        assert_eq!(
+            "native-tls".parse::<TlsBackend>().unwrap(),
+            TlsBackend::Native
+        );
+        assert_eq!("openssl".parse::<TlsBackend>().unwrap(), TlsBackend::Native);
+        assert_eq!("random".parse::<TlsBackend>().unwrap(), TlsBackend::Random);
+        assert!("invalid".parse::<TlsBackend>().is_err());
+    }
+
+    #[test]
+    fn tls_backend_default_is_rustls() {
+        assert_eq!(TlsBackend::default(), TlsBackend::Rustls);
+    }
+
+    #[test]
+    fn tls_backend_resolve_concrete() {
+        assert_eq!(TlsBackend::Rustls.resolve(), TlsBackend::Rustls);
+        assert_eq!(TlsBackend::Native.resolve(), TlsBackend::Native);
+    }
+
+    #[test]
+    fn tls_backend_resolve_random() {
+        // Random should resolve to either Rustls or Native, never Random.
+        for _ in 0..50 {
+            let resolved = TlsBackend::Random.resolve();
+            assert!(
+                resolved == TlsBackend::Rustls || resolved == TlsBackend::Native,
+                "Random resolved to unexpected: {resolved}"
+            );
+        }
+    }
+
+    #[test]
+    fn tls_backend_display() {
+        assert_eq!(TlsBackend::Rustls.to_string(), "rustls");
+        assert_eq!(TlsBackend::Native.to_string(), "native");
+        assert_eq!(TlsBackend::Random.to_string(), "random");
     }
 
     #[test]

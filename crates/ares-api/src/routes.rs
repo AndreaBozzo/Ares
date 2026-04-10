@@ -13,6 +13,8 @@ use uuid::Uuid;
 use ares_client::{HtmdCleaner, OpenAiExtractor, ReqwestFetcher};
 use ares_core::job::CreateScrapeJobRequest;
 use ares_core::job_queue::JobQueue;
+use ares_core::models::ScrapeResult;
+use ares_core::traits::Fetcher;
 use ares_core::{NullStore, SchemaResolver, ScrapeService};
 
 use crate::auth::require_api_key;
@@ -87,11 +89,11 @@ pub async fn scrape(
         )
     })?;
 
-    let model = body.model.unwrap_or_else(|| {
+    let model = body.model.clone().unwrap_or_else(|| {
         std::env::var("ARES_MODEL").unwrap_or_else(|_| "gpt-4o-mini".to_string())
     });
 
-    let base_url = body.base_url.unwrap_or_else(|| {
+    let base_url = body.base_url.clone().unwrap_or_else(|| {
         std::env::var("ARES_BASE_URL").unwrap_or_else(|_| "https://api.openai.com/v1".to_string())
     });
 
@@ -100,31 +102,16 @@ pub async fn scrape(
     // Validate schema
     ares_core::validate_schema(&body.schema)?;
 
-    // Build pipeline components — apply server-level proxy + UA rotation
-    let mut fetcher = ReqwestFetcher::new()?;
-    if let Some(ref pc) = state.proxy_config {
-        fetcher = fetcher
-            .with_proxies(pc.clone())
-            .map_err(|e| ares_core::AppError::ConfigError(format!("proxy config: {e}")))?;
-    }
-    if state.random_ua {
-        fetcher = fetcher.with_random_ua();
-    }
     let cleaner = HtmdCleaner::new();
     let extractor = OpenAiExtractor::with_base_url(&api_key, &model, &base_url)?;
 
-    // Run the scrape pipeline
-    let result = if save {
-        let repo = state.db.extraction_repo();
-        let service = ScrapeService::with_store(fetcher, cleaner, extractor, repo, model);
-        service
-            .scrape(&body.url, &body.schema, &body.schema_name)
-            .await?
+    // Build fetcher — browser or reqwest, with optional proxy + UA + stealth
+    let result = if state.browser {
+        let fetcher = create_browser_fetcher(&state).await?;
+        run_scrape(fetcher, cleaner, extractor, &state, &body, &model, save).await?
     } else {
-        let service = ScrapeService::with_store(fetcher, cleaner, extractor, NullStore, model);
-        service
-            .scrape(&body.url, &body.schema, &body.schema_name)
-            .await?
+        let fetcher = create_reqwest_fetcher(&state)?;
+        run_scrape(fetcher, cleaner, extractor, &state, &body, &model, save).await?
     };
 
     let response = ScrapeResponse {
@@ -136,6 +123,73 @@ pub async fn scrape(
     };
 
     Ok(axum::Json(response))
+}
+
+/// Build a `ReqwestFetcher` with server-level proxy + UA + TLS config.
+fn create_reqwest_fetcher(state: &AppState) -> Result<ReqwestFetcher, ares_core::AppError> {
+    let mut fetcher = ReqwestFetcher::new()?.with_tls_backend(state.tls_backend)?;
+    if let Some(ref pc) = state.proxy_config {
+        fetcher = fetcher.with_proxies(pc.clone())?;
+    }
+    if state.random_ua {
+        fetcher = fetcher.with_random_ua();
+    }
+    Ok(fetcher)
+}
+
+/// Build a `BrowserFetcher` with server-level proxy + stealth config.
+#[cfg(feature = "browser")]
+async fn create_browser_fetcher(
+    state: &AppState,
+) -> Result<ares_client::BrowserFetcher, ares_core::AppError> {
+    let proxy_url = state
+        .proxy_config
+        .as_ref()
+        .map(|pc| pc.next().authenticated_url());
+    let mut fetcher = ares_client::BrowserFetcher::with_timeout_and_proxy(
+        std::time::Duration::from_secs(30),
+        proxy_url.as_deref(),
+    )
+    .await?;
+    if state.stealth {
+        fetcher = fetcher.with_stealth(ares_core::stealth::StealthConfig::full());
+    }
+    Ok(fetcher)
+}
+
+#[cfg(not(feature = "browser"))]
+async fn create_browser_fetcher(_state: &AppState) -> Result<ReqwestFetcher, ares_core::AppError> {
+    Err(ares_core::AppError::ConfigError(
+        "ARES_BROWSER=true requires the `browser` feature. \
+         Rebuild with: cargo build --features browser"
+            .to_string(),
+    ))
+}
+
+/// Run the scrape pipeline with any fetcher type.
+async fn run_scrape<F: Fetcher>(
+    fetcher: F,
+    cleaner: HtmdCleaner,
+    extractor: OpenAiExtractor,
+    state: &AppState,
+    body: &ScrapeRequest,
+    model: &str,
+    save: bool,
+) -> Result<ScrapeResult, ares_core::AppError> {
+    if save {
+        let repo = state.db.extraction_repo();
+        let service =
+            ScrapeService::with_store(fetcher, cleaner, extractor, repo, model.to_string());
+        service
+            .scrape(&body.url, &body.schema, &body.schema_name)
+            .await
+    } else {
+        let service =
+            ScrapeService::with_store(fetcher, cleaner, extractor, NullStore, model.to_string());
+        service
+            .scrape(&body.url, &body.schema, &body.schema_name)
+            .await
+    }
 }
 
 // ---------------------------------------------------------------------------
