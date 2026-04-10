@@ -203,8 +203,7 @@ impl BrowserFetcher {
             let platform = ua.map(stealth::platform_for_ua).unwrap_or("Win32");
             page.execute(AddScriptToEvaluateOnNewDocumentParams {
                 source: format!(
-                    "Object.defineProperty(navigator, 'platform', {{ get: () => '{}' }});",
-                    platform
+                    "Object.defineProperty(navigator, 'platform', {{ get: () => '{platform}' }});"
                 ),
                 world_name: None,
                 include_command_line_api: None,
@@ -219,8 +218,7 @@ impl BrowserFetcher {
             let languages = stealth::random_languages();
             page.execute(AddScriptToEvaluateOnNewDocumentParams {
                 source: format!(
-                    "Object.defineProperty(navigator, 'languages', {{ get: () => {} }});",
-                    languages
+                    "Object.defineProperty(navigator, 'languages', {{ get: () => {languages} }});"
                 ),
                 world_name: None,
                 include_command_line_api: None,
