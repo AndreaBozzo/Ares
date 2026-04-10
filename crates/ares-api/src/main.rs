@@ -13,6 +13,7 @@ use tracing_subscriber::EnvFilter;
 
 use ares_api::routes;
 use ares_api::state::AppState;
+use ares_core::proxy::{ProxyConfig, ProxyEntry, RotationStrategy, TlsBackend};
 use ares_db::{Database, DatabaseConfig};
 
 #[tokio::main]
@@ -40,10 +41,47 @@ async fn main() -> anyhow::Result<()> {
     }
     tracing::info!("Schemas directory: {}", schemas_dir.display());
 
+    // -- Proxy / UA rotation (server-level) --
+    let proxy_config = build_proxy_config()?;
+    let random_ua = std::env::var("ARES_RANDOM_UA")
+        .map(|v| v == "true" || v == "1")
+        .unwrap_or(false);
+    let browser = std::env::var("ARES_BROWSER")
+        .map(|v| v == "true" || v == "1")
+        .unwrap_or(false);
+    let stealth = std::env::var("ARES_STEALTH")
+        .map(|v| v == "true" || v == "1")
+        .unwrap_or(false);
+    let tls_backend: TlsBackend = std::env::var("ARES_TLS_BACKEND")
+        .unwrap_or_else(|_| "rustls".to_string())
+        .parse()
+        .map_err(|e: String| anyhow::anyhow!("{e}"))?;
+
+    if proxy_config.is_some() {
+        tracing::info!("Proxy rotation: enabled");
+    }
+    if random_ua {
+        tracing::info!("User-Agent rotation: enabled");
+    }
+    if browser {
+        tracing::info!("Browser mode: enabled");
+    }
+    if stealth {
+        tracing::info!("Browser stealth: enabled");
+    }
+    if !matches!(tls_backend, TlsBackend::Rustls) {
+        tracing::info!("TLS backend: {tls_backend}");
+    }
+
     let state = Arc::new(AppState {
         db,
         admin_token,
         schemas_dir,
+        proxy_config,
+        random_ua,
+        browser,
+        stealth,
+        tls_backend,
     });
 
     // -- Rate limiting (per-IP) --
@@ -101,6 +139,36 @@ async fn main() -> anyhow::Result<()> {
     .await?;
 
     Ok(())
+}
+
+/// Build a `ProxyConfig` from `ARES_PROXY` and/or `ARES_PROXY_FILE` env vars.
+fn build_proxy_config() -> anyhow::Result<Option<ProxyConfig>> {
+    let rotation: RotationStrategy = std::env::var("ARES_PROXY_ROTATION")
+        .unwrap_or_else(|_| "round-robin".to_string())
+        .parse()
+        .map_err(|e: String| anyhow::anyhow!("{e}"))?;
+
+    let mut entries: Vec<ProxyEntry> = Vec::new();
+
+    if let Ok(url) = std::env::var("ARES_PROXY") {
+        entries.push(ProxyEntry::new(url));
+    }
+
+    if let Ok(path) = std::env::var("ARES_PROXY_FILE") {
+        let content = std::fs::read_to_string(&path)
+            .map_err(|e| anyhow::anyhow!("Failed to read ARES_PROXY_FILE '{path}': {e}"))?;
+        for line in content.lines().map(str::trim) {
+            if !line.is_empty() && !line.starts_with('#') {
+                entries.push(ProxyEntry::new(line));
+            }
+        }
+    }
+
+    if entries.is_empty() {
+        return Ok(None);
+    }
+
+    Ok(Some(ProxyConfig::new(entries, rotation)))
 }
 
 /// Parse an env var as a numeric type, falling back to a default.
