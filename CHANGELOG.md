@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-04-29
+
+
+### Added
+
+- **proxy**: Implement anti-bot measures
+
+
+### Dependencies
+
+- **deps**: Bump rustls-webpki from 0.103.10 to 0.103.13
+
+
+### Miscellaneous
+
+- Astral-tar bump
+- Bump package versions to 0.3.0
 ## [0.2.0] - 2026-03-31
 
 
@@ -35,6 +52,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **deps**: Update aws-lc-rs to 1.16.1 to resolve 3 security advisories
+- Skip serializing raw_html in ScrapeResult
 ## [0.1.0] - 2026-02-28
 
 
