@@ -4,28 +4,35 @@
   "type": "object",
   "properties": {
     "title": {
-      "type": "string"
+      "type": "string",
+      "description": "Title of the blog post"
     },
     "author": {
-      "type": "string"
+      "type": "string",
+      "description": "Author or byline of the post"
     },
     "publish_date": {
-      "type": "string"
+      "type": "string",
+      "description": "Date the post was published"
     },
     "summary": {
-      "type": "string"
+      "type": "string",
+      "description": "Short summary or lead paragraph of the post"
     },
     "tags": {
       "type": "array",
       "items": {
         "type": "string"
-      }
+      },
+      "description": "Tags or topic labels for the post"
     },
     "hero_image": {
-      "type": "string"
+      "type": "string",
+      "description": "URL of the post's hero or featured image"
     },
     "url": {
-      "type": "string"
+      "type": "string",
+      "description": "Canonical URL of the blog post"
     }
   },
   "required": [

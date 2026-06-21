@@ -85,3 +85,21 @@ cargo run --example bench --features anthropic -- bench/targets.json
 ```
 
 See [bench/README.md](../bench/README.md) for details.
+
+## Multi-item pages (boards, search results, listings)
+
+A page that lists *many* items (a job board, a tender search-results page) doesn't fit a
+single-item schema — the model picks one item and tends to fabricate the rest. Two
+supported approaches:
+
+1. **Listing schema** — an object with an array of item objects (e.g. `job_board`,
+   `tender_list` in `schemas/`). The pipeline, validation, and groundedness all handle
+   nested arrays. Best for **fast/hosted models**: a board with ~20 items means the model
+   must *emit* a large JSON array, which is output-bound and slow on a local CPU model
+   (it can exceed the LLM timeout).
+2. **Crawl to individual items** (recommended for local models) — point `ares crawl` at
+   the listing page with a *single-item* schema; link discovery enqueues each item URL as
+   its own small, fast extraction. Each page is bounded, so a slow local model stays
+   responsive.
+
+Rule of thumb: hosted model → listing schema is convenient; local model → crawl to items.

@@ -1,0 +1,47 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "TenderList",
+  "type": "object",
+  "description": "A page that lists multiple procurement notices (search results / listing page)",
+  "properties": {
+    "tenders": {
+      "type": "array",
+      "description": "Every tender / contract notice listed on the page",
+      "items": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "description": "Title of the notice"
+          },
+          "buyer": {
+            "type": "string",
+            "description": "Contracting authority / buyer"
+          },
+          "published_date": {
+            "type": "string",
+            "description": "Publication date"
+          },
+          "deadline": {
+            "type": "string",
+            "description": "Submission deadline"
+          },
+          "value": {
+            "type": "string",
+            "description": "Estimated or total value, including currency"
+          },
+          "url": {
+            "type": "string",
+            "description": "Link to the individual notice"
+          }
+        },
+        "required": [
+          "title"
+        ]
+      }
+    }
+  },
+  "required": [
+    "tenders"
+  ]
+}
