@@ -12,10 +12,15 @@ use std::time::Duration;
 use ares_core::error::AppError;
 use ares_core::traits::{Extractor, ExtractorFactory};
 
+#[cfg(not(feature = "local-llm"))]
+use crate::LOCAL_LLM_FEATURE_MSG;
 use crate::llm::{OpenAiExtractor, OpenAiExtractorFactory};
 
 #[cfg(feature = "anthropic")]
 use crate::anthropic::{AnthropicExtractor, AnthropicExtractorFactory};
+
+#[cfg(feature = "local-llm")]
+use crate::candle::{CandleExtractor, CandleExtractorFactory};
 
 #[cfg(not(feature = "anthropic"))]
 const ANTHROPIC_FEATURE_MSG: &str = "Anthropic provider requires the `anthropic` feature. Rebuild with: cargo build --features anthropic";
@@ -28,6 +33,8 @@ pub enum Provider {
     OpenAi,
     /// Native Anthropic Messages API (Claude).
     Anthropic,
+    /// Native CPU inference through Candle.
+    Local,
 }
 
 impl Provider {
@@ -37,8 +44,9 @@ impl Provider {
         match s.trim().to_ascii_lowercase().as_str() {
             "" | "openai" => Ok(Provider::OpenAi),
             "anthropic" | "claude" => Ok(Provider::Anthropic),
+            "local" | "candle" => Ok(Provider::Local),
             other => Err(AppError::ConfigError(format!(
-                "Unknown provider '{other}'. Expected 'openai' or 'anthropic'."
+                "Unknown provider '{other}'. Expected 'openai', 'anthropic', or 'local'."
             ))),
         }
     }
@@ -48,6 +56,7 @@ impl Provider {
         match self {
             Provider::OpenAi => "https://api.openai.com/v1",
             Provider::Anthropic => "https://api.anthropic.com/v1",
+            Provider::Local => "local://",
         }
     }
 }
@@ -58,6 +67,8 @@ pub enum ProviderExtractor {
     OpenAi(OpenAiExtractor),
     #[cfg(feature = "anthropic")]
     Anthropic(AnthropicExtractor),
+    #[cfg(feature = "local-llm")]
+    Local(CandleExtractor),
 }
 
 impl ProviderExtractor {
@@ -99,6 +110,22 @@ impl ProviderExtractor {
                     Err(AppError::ConfigError(ANTHROPIC_FEATURE_MSG.to_string()))
                 }
             }
+            Provider::Local => {
+                #[cfg(feature = "local-llm")]
+                {
+                    let _ = (api_key, base_url, llm_timeout);
+                    let mut e = CandleExtractor::new(model)?;
+                    if let Some(p) = system_prompt {
+                        e = e.with_system_prompt(p);
+                    }
+                    Ok(ProviderExtractor::Local(e))
+                }
+                #[cfg(not(feature = "local-llm"))]
+                {
+                    let _ = (api_key, model, base_url, llm_timeout, system_prompt);
+                    Err(AppError::ConfigError(LOCAL_LLM_FEATURE_MSG.to_string()))
+                }
+            }
         }
     }
 }
@@ -113,6 +140,8 @@ impl Extractor for ProviderExtractor {
             ProviderExtractor::OpenAi(e) => e.extract(content, schema).await,
             #[cfg(feature = "anthropic")]
             ProviderExtractor::Anthropic(e) => e.extract(content, schema).await,
+            #[cfg(feature = "local-llm")]
+            ProviderExtractor::Local(e) => e.extract(content, schema).await,
         }
     }
 }
@@ -124,6 +153,8 @@ pub enum ProviderExtractorFactory {
     OpenAi(OpenAiExtractorFactory),
     #[cfg(feature = "anthropic")]
     Anthropic(AnthropicExtractorFactory),
+    #[cfg(feature = "local-llm")]
+    Local(CandleExtractorFactory),
 }
 
 impl ProviderExtractorFactory {
@@ -162,6 +193,22 @@ impl ProviderExtractorFactory {
                     Err(AppError::ConfigError(ANTHROPIC_FEATURE_MSG.to_string()))
                 }
             }
+            Provider::Local => {
+                #[cfg(feature = "local-llm")]
+                {
+                    let _ = (api_key, llm_timeout);
+                    let mut f = CandleExtractorFactory::new()?;
+                    if let Some(p) = system_prompt {
+                        f = f.with_system_prompt(p);
+                    }
+                    Ok(ProviderExtractorFactory::Local(f))
+                }
+                #[cfg(not(feature = "local-llm"))]
+                {
+                    let _ = (api_key, llm_timeout, system_prompt);
+                    Err(AppError::ConfigError(LOCAL_LLM_FEATURE_MSG.to_string()))
+                }
+            }
         }
     }
 }
@@ -178,6 +225,10 @@ impl ExtractorFactory for ProviderExtractorFactory {
             ProviderExtractorFactory::Anthropic(f) => {
                 Ok(ProviderExtractor::Anthropic(f.create(model, base_url)?))
             }
+            #[cfg(feature = "local-llm")]
+            ProviderExtractorFactory::Local(f) => {
+                Ok(ProviderExtractor::Local(f.create(model, base_url)?))
+            }
         }
     }
 }
@@ -193,6 +244,7 @@ mod tests {
         assert_eq!(Provider::parse("").unwrap(), Provider::OpenAi);
         assert_eq!(Provider::parse("anthropic").unwrap(), Provider::Anthropic);
         assert_eq!(Provider::parse(" Claude ").unwrap(), Provider::Anthropic);
+        assert_eq!(Provider::parse("local").unwrap(), Provider::Local);
         assert!(Provider::parse("gemini").is_err());
     }
 
@@ -206,6 +258,7 @@ mod tests {
             Provider::Anthropic.default_base_url(),
             "https://api.anthropic.com/v1"
         );
+        assert_eq!(Provider::Local.default_base_url(), "local://");
     }
 
     #[test]
@@ -229,6 +282,20 @@ mod tests {
             "key",
             "claude-haiku-4-5",
             "https://api.anthropic.com/v1",
+            None,
+            None,
+        );
+        assert!(matches!(e, Err(AppError::ConfigError(_))));
+    }
+
+    #[cfg(not(feature = "local-llm"))]
+    #[test]
+    fn local_errors_without_feature() {
+        let e = ProviderExtractor::build(
+            Provider::Local,
+            "",
+            "qwen2.5-3b-instruct-q4",
+            "local://",
             None,
             None,
         );

@@ -8,6 +8,7 @@ description = "HTTP server for Ares AI scraper"
 [features]
 anthropic = ["ares-client/anthropic"]
 browser = ["ares-client/browser"]
+local-llm = ["ares-client/local-llm"]
 
 [dependencies]
 # HTTP Server

@@ -10,6 +10,14 @@ description = "HTTP fetcher, HTML cleaner, and LLM extraction client for Ares"
 # OpenAI-only builds don't compile the Anthropic-specific code.
 anthropic = []
 browser = ["dep:chromiumoxide", "dep:futures"]
+local-llm = [
+    "dep:candle-core",
+    "dep:candle-nn",
+    "dep:candle-transformers",
+    "dep:directories",
+    "dep:hf-hub",
+    "dep:tokenizers",
+]
 
 [dependencies]
 ares-core.workspace = true
@@ -24,11 +32,18 @@ chromiumoxide = { workspace = true, optional = true }
 futures = { workspace = true, optional = true }
 scraper = "0.26.0"
 robotstxt.workspace = true
+candle-core = { workspace = true, optional = true }
+candle-nn = { workspace = true, optional = true }
+candle-transformers = { workspace = true, optional = true }
+directories = { workspace = true, optional = true }
+hf-hub = { workspace = true, optional = true }
+tokenizers = { workspace = true, optional = true }
 
 [dev-dependencies]
 anyhow.workspace = true
 tracing-subscriber.workspace = true
 tokio = { workspace = true, features = ["full"] }
+tempfile.workspace = true
 
 [[example]]
 name = "browser_smoke"
