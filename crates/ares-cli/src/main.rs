@@ -7,8 +7,8 @@ use tracing_subscriber::EnvFilter;
 use uuid::Uuid;
 
 use ares_client::{
-    CachedRobotsChecker, HtmdCleaner, HtmlLinkDiscoverer, OpenAiExtractor, OpenAiExtractorFactory,
-    ReqwestFetcher,
+    CachedRobotsChecker, HtmdCleaner, HtmlLinkDiscoverer, Provider, ProviderExtractor,
+    ProviderExtractorFactory, ReqwestFetcher,
 };
 use ares_core::circuit_breaker::{CircuitBreaker, CircuitBreakerConfig};
 use ares_core::job::{CreateScrapeJobRequest, JobStatus, WorkerConfig};
@@ -110,18 +110,17 @@ enum Commands {
         #[arg(short, long)]
         schema: String,
 
-        /// LLM model to use (e.g., "gpt-4o-mini", "gemini-2.5-flash")
+        /// LLM model (e.g., "gpt-4o-mini", "gemini-2.5-flash", "claude-haiku-4-5")
         #[arg(short, long, env = "ARES_MODEL")]
         model: String,
 
-        /// OpenAI-compatible API base URL
-        #[arg(
-            short,
-            long,
-            env = "ARES_BASE_URL",
-            default_value = "https://api.openai.com/v1"
-        )]
-        base_url: String,
+        /// LLM provider: "openai" (OpenAI-compatible, default) or "anthropic" (Claude)
+        #[arg(long, env = "ARES_PROVIDER", default_value = "openai")]
+        provider: String,
+
+        /// API base URL (defaults to the selected provider's endpoint)
+        #[arg(short, long, env = "ARES_BASE_URL")]
+        base_url: Option<String>,
 
         /// API key (reads from ARES_API_KEY env var if not provided)
         #[arg(short, long, env = "ARES_API_KEY")]
@@ -246,6 +245,11 @@ enum Commands {
         /// API key for LLM calls
         #[arg(short, long, env = "ARES_API_KEY")]
         api_key: String,
+
+        /// LLM provider: "openai" (default) or "anthropic". Per-job base URLs
+        /// should target the selected provider's API.
+        #[arg(long, env = "ARES_PROVIDER", default_value = "openai")]
+        provider: String,
 
         /// Use headless browser for JS-rendered pages (requires `browser` feature)
         #[arg(long, default_value_t = false)]
@@ -450,6 +454,7 @@ async fn main() -> Result<()> {
             url,
             schema,
             model,
+            provider,
             base_url,
             api_key,
             save,
@@ -475,6 +480,9 @@ async fn main() -> Result<()> {
             let schema_name = schema_name.unwrap_or(resolved.name);
             let schema_value = resolved.schema;
 
+            let provider = Provider::parse(&provider).map_err(|e| anyhow::anyhow!("{e}"))?;
+            let base_url = base_url.unwrap_or_else(|| provider.default_base_url().to_string());
+
             let fetch_timeout = fetch_timeout.map(Duration::from_secs);
             let proxy_config = build_proxy_config(proxy, proxy_file, &proxy_rotation)?;
             let tls: TlsBackend = tls_backend
@@ -485,6 +493,7 @@ async fn main() -> Result<()> {
                 schema_value,
                 schema_name: &schema_name,
                 model: &model,
+                provider,
                 base_url: &base_url,
                 api_key: &api_key,
                 save,
@@ -656,6 +665,7 @@ async fn main() -> Result<()> {
             worker_id,
             poll_interval,
             api_key,
+            provider,
             browser,
             fetch_timeout,
             llm_timeout,
@@ -671,12 +681,14 @@ async fn main() -> Result<()> {
             no_cache,
             cache_ttl,
         } => {
+            let provider = Provider::parse(&provider).map_err(|e| anyhow::anyhow!("{e}"))?;
             let proxy_config = build_proxy_config(proxy, proxy_file, &proxy_rotation)?;
             let tls: TlsBackend = tls_backend
                 .parse()
                 .map_err(|e: String| anyhow::anyhow!("{e}"))?;
             let worker_opts = WorkerOpts {
                 api_key: &api_key,
+                provider,
                 worker_id,
                 poll_interval,
                 fetch_timeout: fetch_timeout.map(Duration::from_secs),
@@ -859,6 +871,7 @@ struct ScrapeOpts<'a> {
     schema_value: serde_json::Value,
     schema_name: &'a str,
     model: &'a str,
+    provider: Provider,
     base_url: &'a str,
     api_key: &'a str,
     save: bool,
@@ -887,13 +900,14 @@ fn build_caches(no_cache: bool, ttl_secs: u64) -> (Option<ContentCache>, Option<
 /// One-shot scrape: fetch → clean → extract → (optionally) persist.
 async fn cmd_scrape<F: Fetcher>(fetcher: F, opts: ScrapeOpts<'_>) -> Result<()> {
     let cleaner = HtmdCleaner::new();
-    let mut extractor = OpenAiExtractor::with_base_url(opts.api_key, opts.model, opts.base_url)?;
-    if let Some(t) = opts.llm_timeout {
-        extractor = extractor.with_timeout(t)?;
-    }
-    if let Some(p) = opts.system_prompt {
-        extractor = extractor.with_system_prompt(p);
-    }
+    let extractor = ProviderExtractor::build(
+        opts.provider,
+        opts.api_key,
+        opts.model,
+        opts.base_url,
+        opts.llm_timeout,
+        opts.system_prompt,
+    )?;
 
     let (content_cache, extraction_cache) = build_caches(opts.no_cache, opts.cache_ttl);
 
@@ -930,6 +944,7 @@ async fn cmd_scrape<F: Fetcher>(fetcher: F, opts: ScrapeOpts<'_>) -> Result<()> 
 /// Options for the worker command.
 struct WorkerOpts<'a> {
     api_key: &'a str,
+    provider: Provider,
     worker_id: Option<String>,
     poll_interval: u64,
     fetch_timeout: Option<Duration>,
@@ -957,13 +972,12 @@ async fn cmd_worker<F: Fetcher>(fetcher: F, opts: WorkerOpts<'_>) -> Result<()> 
     };
 
     let cleaner = HtmdCleaner::new();
-    let mut extractor_factory = OpenAiExtractorFactory::new(opts.api_key);
-    if let Some(t) = opts.llm_timeout {
-        extractor_factory = extractor_factory.with_llm_timeout(t);
-    }
-    if let Some(p) = opts.system_prompt {
-        extractor_factory = extractor_factory.with_system_prompt(p);
-    }
+    let extractor_factory = ProviderExtractorFactory::build(
+        opts.provider,
+        opts.api_key,
+        opts.llm_timeout,
+        opts.system_prompt,
+    )?;
     let discoverer = HtmlLinkDiscoverer::new();
     let robots_checker = CachedRobotsChecker::with_user_agent("Ares/0.2");
     let cb = CircuitBreaker::new("llm", CircuitBreakerConfig::default());

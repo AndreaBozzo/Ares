@@ -6,6 +6,9 @@ license.workspace = true
 description = "HTTP fetcher, HTML cleaner, and LLM extraction client for Ares"
 
 [features]
+# Native Anthropic (Claude) extractor. No extra dependencies — gated only so
+# OpenAI-only builds don't compile the Anthropic-specific code.
+anthropic = []
 browser = ["dep:chromiumoxide", "dep:futures"]
 
 [dependencies]

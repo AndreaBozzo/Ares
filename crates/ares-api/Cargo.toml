@@ -6,6 +6,7 @@ license.workspace = true
 description = "HTTP server for Ares AI scraper"
 
 [features]
+anthropic = ["ares-client/anthropic"]
 browser = ["ares-client/browser"]
 
 [dependencies]

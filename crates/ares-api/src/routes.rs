@@ -10,7 +10,7 @@ use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 use uuid::Uuid;
 
-use ares_client::{HtmdCleaner, OpenAiExtractor, ReqwestFetcher};
+use ares_client::{HtmdCleaner, Provider, ProviderExtractor, ReqwestFetcher};
 use ares_core::job::CreateScrapeJobRequest;
 use ares_core::job_queue::JobQueue;
 use ares_core::models::ScrapeResult;
@@ -89,13 +89,21 @@ pub async fn scrape(
         )
     })?;
 
+    let provider_name = body
+        .provider
+        .clone()
+        .unwrap_or_else(|| std::env::var("ARES_PROVIDER").unwrap_or_else(|_| "openai".to_string()));
+    let provider = Provider::parse(&provider_name)?;
+
     let model = body.model.clone().unwrap_or_else(|| {
         std::env::var("ARES_MODEL").unwrap_or_else(|_| "gpt-4o-mini".to_string())
     });
 
-    let base_url = body.base_url.clone().unwrap_or_else(|| {
-        std::env::var("ARES_BASE_URL").unwrap_or_else(|_| "https://api.openai.com/v1".to_string())
-    });
+    let base_url = body
+        .base_url
+        .clone()
+        .or_else(|| std::env::var("ARES_BASE_URL").ok())
+        .unwrap_or_else(|| provider.default_base_url().to_string());
 
     let save = body.save.unwrap_or(true);
 
@@ -103,7 +111,7 @@ pub async fn scrape(
     ares_core::validate_schema(&body.schema)?;
 
     let cleaner = HtmdCleaner::new();
-    let extractor = OpenAiExtractor::with_base_url(&api_key, &model, &base_url)?;
+    let extractor = ProviderExtractor::build(provider, &api_key, &model, &base_url, None, None)?;
 
     // Build fetcher — browser or reqwest, with optional proxy + UA + stealth
     let result = if state.browser {
@@ -170,7 +178,7 @@ async fn create_browser_fetcher(_state: &AppState) -> Result<ReqwestFetcher, are
 async fn run_scrape<F: Fetcher>(
     fetcher: F,
     cleaner: HtmdCleaner,
-    extractor: OpenAiExtractor,
+    extractor: ProviderExtractor,
     state: &AppState,
     body: &ScrapeRequest,
     model: &str,
