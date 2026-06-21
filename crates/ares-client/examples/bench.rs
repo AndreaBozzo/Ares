@@ -9,7 +9,7 @@
 //! ```text
 //! cp bench/targets.example.json bench/targets.json   # then edit
 //! export OPENAI_API_KEY=...            # keys for the targets you enabled
-//! cargo run --example bench --features anthropic -- bench/targets.json
+//! cargo run --example bench --features "anthropic,local-llm" -- bench/targets.json
 //! ```
 //! Run from the repository root (schemas are resolved from `./schemas`). Targets
 //! whose API key env var is unset are skipped (unless `api_key_optional`, for
@@ -42,8 +42,9 @@ struct Target {
     provider: String,
     model: String,
     base_url: String,
-    /// Environment variable holding this target's API key.
-    api_key_env: String,
+    /// Environment variable holding this target's API key. Native local targets
+    /// have no upstream key and omit this field.
+    api_key_env: Option<String>,
     /// If true and the key env is unset, run anyway with a placeholder key
     /// (for local servers that ignore auth). Defaults to false.
     #[serde(default)]
@@ -119,23 +120,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     for fx in &prepared {
         for target in &config.targets {
-            let api_key = match std::env::var(&target.api_key_env) {
-                Ok(k) if !k.is_empty() => k,
-                _ if target.api_key_optional => "sk-local".to_string(),
-                _ => {
-                    rows.push(skipped(
-                        &fx.name,
-                        target,
-                        format!("{} unset", target.api_key_env),
-                    ));
-                    continue;
-                }
-            };
-
             let provider = match Provider::parse(&target.provider) {
                 Ok(p) => p,
                 Err(e) => {
                     rows.push(errored(&fx.name, target, e.to_string()));
+                    continue;
+                }
+            };
+
+            let api_key = match target.api_key_env.as_deref() {
+                Some(env) => match std::env::var(env) {
+                    Ok(k) if !k.is_empty() => k,
+                    _ if target.api_key_optional => "sk-local".to_string(),
+                    _ => {
+                        rows.push(skipped(&fx.name, target, format!("{env} unset")));
+                        continue;
+                    }
+                },
+                None if provider == Provider::Local => String::new(),
+                None => {
+                    rows.push(skipped(&fx.name, target, "api_key_env unset".to_string()));
                     continue;
                 }
             };

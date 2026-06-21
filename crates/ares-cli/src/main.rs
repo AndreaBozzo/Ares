@@ -10,6 +10,12 @@ use ares_client::{
     CachedRobotsChecker, HtmdCleaner, HtmlLinkDiscoverer, Provider, ProviderExtractor,
     ProviderExtractorFactory, ReqwestFetcher,
 };
+
+#[cfg(feature = "local-llm")]
+use ares_client::LocalModelStore;
+
+#[cfg(not(feature = "local-llm"))]
+use ares_client::LOCAL_LLM_FEATURE_MSG;
 use ares_core::circuit_breaker::{CircuitBreaker, CircuitBreakerConfig};
 use ares_core::job::{CreateScrapeJobRequest, JobStatus, WorkerConfig};
 use ares_core::job_queue::JobQueue;
@@ -114,7 +120,7 @@ enum Commands {
         #[arg(short, long, env = "ARES_MODEL")]
         model: String,
 
-        /// LLM provider: "openai" (OpenAI-compatible, default) or "anthropic" (Claude)
+        /// LLM provider: "openai" (OpenAI-compatible, default), "anthropic", or "local"
         #[arg(long, env = "ARES_PROVIDER", default_value = "openai")]
         provider: String,
 
@@ -122,9 +128,9 @@ enum Commands {
         #[arg(short, long, env = "ARES_BASE_URL")]
         base_url: Option<String>,
 
-        /// API key (reads from ARES_API_KEY env var if not provided)
+        /// API key (required for cloud providers; reads from ARES_API_KEY)
         #[arg(short, long, env = "ARES_API_KEY")]
-        api_key: String,
+        api_key: Option<String>,
 
         /// Save extraction to database (requires DATABASE_URL)
         #[arg(long, default_value_t = false)]
@@ -236,6 +242,12 @@ enum Commands {
         action: SchemaCommands,
     },
 
+    /// Download, inspect, and remove native local models
+    Model {
+        #[command(subcommand)]
+        action: ModelCommands,
+    },
+
     /// Start a worker to process scrape jobs
     Worker {
         /// Worker ID (auto-generated if not provided)
@@ -246,11 +258,11 @@ enum Commands {
         #[arg(long, default_value_t = 5)]
         poll_interval: u64,
 
-        /// API key for LLM calls
+        /// API key for cloud LLM calls (not needed with --provider local)
         #[arg(short, long, env = "ARES_API_KEY")]
-        api_key: String,
+        api_key: Option<String>,
 
-        /// LLM provider: "openai" (default) or "anthropic". Per-job base URLs
+        /// LLM provider: "openai" (default), "anthropic", or "local". Per-job base URLs
         /// should target the selected provider's API.
         #[arg(long, env = "ARES_PROVIDER", default_value = "openai")]
         provider: String,
@@ -441,6 +453,22 @@ enum SchemaCommands {
     },
 }
 
+#[derive(Subcommand)]
+enum ModelCommands {
+    /// Download a supported native model into Ares' local cache
+    Pull {
+        #[arg(value_name = "MODEL")]
+        model: String,
+    },
+    /// Show native models currently cached by Ares
+    List,
+    /// Remove a native model from Ares' local cache
+    Remove {
+        #[arg(value_name = "MODEL")]
+        model: String,
+    },
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let _ = dotenvy::dotenv();
@@ -487,6 +515,7 @@ async fn main() -> Result<()> {
 
             let provider = Provider::parse(&provider).map_err(|e| anyhow::anyhow!("{e}"))?;
             let base_url = base_url.unwrap_or_else(|| provider.default_base_url().to_string());
+            let api_key = api_key_for(provider, api_key.as_deref())?;
 
             let fetch_timeout = fetch_timeout.map(Duration::from_secs);
             let proxy_config = build_proxy_config(proxy, proxy_file, &proxy_rotation)?;
@@ -667,6 +696,8 @@ async fn main() -> Result<()> {
             }
         },
 
+        Commands::Model { action } => cmd_model(action)?,
+
         Commands::Worker {
             worker_id,
             poll_interval,
@@ -688,6 +719,7 @@ async fn main() -> Result<()> {
             cache_ttl,
         } => {
             let provider = Provider::parse(&provider).map_err(|e| anyhow::anyhow!("{e}"))?;
+            let api_key = api_key_for(provider, api_key.as_deref())?;
             let proxy_config = build_proxy_config(proxy, proxy_file, &proxy_rotation)?;
             let tls: TlsBackend = tls_backend
                 .parse()
@@ -825,6 +857,65 @@ async fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+fn api_key_for(provider: Provider, api_key: Option<&str>) -> Result<String> {
+    match (provider, api_key.filter(|key| !key.trim().is_empty())) {
+        (Provider::Local, key) => Ok(key.unwrap_or_default().to_string()),
+        (_, Some(key)) => Ok(key.to_string()),
+        (_, None) => {
+            anyhow::bail!("--api-key (or ARES_API_KEY) is required for {provider:?} provider")
+        }
+    }
+}
+
+fn cmd_model(action: ModelCommands) -> Result<()> {
+    #[cfg(feature = "local-llm")]
+    {
+        let store = LocalModelStore::from_env().map_err(|e| anyhow::anyhow!("{e}"))?;
+        match action {
+            ModelCommands::Pull { model } => {
+                let status = store.pull(&model).map_err(|e| anyhow::anyhow!("{e}"))?;
+                println!(
+                    "Cached {} ({:.2} GiB) at {}",
+                    status.alias,
+                    status.bytes as f64 / 1024.0_f64.powi(3),
+                    status.path.display()
+                );
+            }
+            ModelCommands::List => {
+                let models = store.list().map_err(|e| anyhow::anyhow!("{e}"))?;
+                if models.is_empty() {
+                    println!(
+                        "No native models cached. Run: ares model pull qwen2.5-3b-instruct-q4"
+                    );
+                } else {
+                    for model in models {
+                        println!(
+                            "{}\t{:.2} GiB\t{}\t{}",
+                            model.alias,
+                            model.bytes as f64 / 1024.0_f64.powi(3),
+                            model.weights_revision,
+                            model.path.display()
+                        );
+                    }
+                }
+            }
+            ModelCommands::Remove { model } => {
+                if store.remove(&model).map_err(|e| anyhow::anyhow!("{e}"))? {
+                    println!("Removed native model: {model}");
+                } else {
+                    println!("Native model was not cached: {model}");
+                }
+            }
+        }
+        Ok(())
+    }
+    #[cfg(not(feature = "local-llm"))]
+    {
+        let _ = action;
+        anyhow::bail!("{LOCAL_LLM_FEATURE_MSG}")
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1112,5 +1203,11 @@ mod tests {
     #[test]
     fn cli_definition_is_valid() {
         Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn local_provider_does_not_require_an_upstream_api_key() {
+        assert_eq!(api_key_for(Provider::Local, None).unwrap(), "");
+        assert!(api_key_for(Provider::OpenAi, None).is_err());
     }
 }

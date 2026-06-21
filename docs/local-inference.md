@@ -1,4 +1,29 @@
-# Local inference (OpenAI-compatible)
+# Local inference
+
+## Native Candle backend (offline after model download)
+
+Build Ares with `local-llm`, then download the one supported native model. It
+runs directly in the Ares process on CPU; no Ollama, llama.cpp server, API key,
+or network connection is needed after `model pull` completes.
+
+```bash
+cargo run -p ares-cli --features local-llm -- model pull qwen2.5-3b-instruct-q4
+
+cargo run -p ares-cli --features local-llm -- scrape \
+  --provider local --model qwen2.5-3b-instruct-q4 \
+  --url https://example.com --schema blog@latest
+```
+
+The model is the pinned `Qwen2.5-3B-Instruct` Q4_K_M GGUF artifact. Ares keeps
+it under the platform cache directory (or `ARES_MODEL_DIR` when set). Inspect
+or remove it with `ares model list` and `ares model remove qwen2.5-3b-instruct-q4`.
+
+Native generation is serialized per loaded model to protect its KV cache, so a
+single process should be treated as a one-at-a-time extractor. Output is parsed,
+validated against the requested schema, and retried once when invalid. As with
+every backend, schema validity does not prove source-groundedness.
+
+## OpenAI-compatible local servers
 
 Ares talks to any OpenAI-compatible `/v1/chat/completions` endpoint, so you can run
 extraction against a **local** model with no code changes — just point `ARES_BASE_URL`

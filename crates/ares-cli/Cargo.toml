@@ -8,6 +8,7 @@ description = "CLI entry point for Ares AI scraper"
 [features]
 anthropic = ["ares-client/anthropic"]
 browser = ["ares-client/browser"]
+local-llm = ["ares-client/local-llm"]
 
 [[bin]]
 name = "ares"

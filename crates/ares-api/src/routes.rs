@@ -82,22 +82,19 @@ pub async fn scrape(
     State(state): State<Arc<AppState>>,
     axum::Json(body): axum::Json<ScrapeRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
-    // Resolve LLM config from request body or environment
-    let api_key = std::env::var("ARES_API_KEY").map_err(|_| {
-        ares_core::AppError::ConfigError(
-            "ARES_API_KEY must be set for scrape endpoints".to_string(),
-        )
-    })?;
-
+    // Resolve LLM config from request body or environment. Native local
+    // inference has no upstream credential, while the route itself remains
+    // protected by the separate ARES_ADMIN_TOKEN middleware.
     let provider_name = body
         .provider
         .clone()
         .unwrap_or_else(|| std::env::var("ARES_PROVIDER").unwrap_or_else(|_| "openai".to_string()));
     let provider = Provider::parse(&provider_name).map_err(|_| {
         ares_core::AppError::InvalidInput(format!(
-            "Invalid provider '{provider_name}': expected 'openai' or 'anthropic'"
+            "Invalid provider '{provider_name}': expected 'openai', 'anthropic', or 'local'"
         ))
     })?;
+    let api_key = upstream_api_key(provider, std::env::var("ARES_API_KEY").ok())?;
 
     let model = body.model.clone().unwrap_or_else(|| {
         std::env::var("ARES_MODEL").unwrap_or_else(|_| "gpt-4o-mini".to_string())
@@ -141,6 +138,20 @@ pub async fn scrape(
     };
 
     Ok(axum::Json(response))
+}
+
+fn upstream_api_key(provider: Provider, configured: Option<String>) -> Result<String, ApiError> {
+    if provider == Provider::Local {
+        return Ok(String::new());
+    }
+    configured
+        .filter(|key| !key.trim().is_empty())
+        .ok_or_else(|| {
+            ares_core::AppError::ConfigError(
+                "ARES_API_KEY must be set for cloud-provider scrape endpoints".to_string(),
+            )
+            .into()
+        })
 }
 
 /// Build a `ReqwestFetcher` with server-level proxy + UA + TLS config.
@@ -820,4 +831,18 @@ pub async fn health(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     };
 
     (status, axum::Json(response))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn local_api_scrape_does_not_need_an_upstream_key() {
+        assert!(matches!(
+            upstream_api_key(Provider::Local, None),
+            Ok(key) if key.is_empty()
+        ));
+        assert!(upstream_api_key(Provider::OpenAi, None).is_err());
+    }
 }

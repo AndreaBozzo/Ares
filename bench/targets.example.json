@@ -4,7 +4,8 @@
     { "file": "bench/fixtures/github_repo.html", "schema": "github_repo@latest" },
     { "file": "bench/fixtures/product.html", "schema": "product@latest" },
     { "file": "bench/fixtures/news_article.html", "schema": "news_article@latest" },
-    { "file": "bench/fixtures/recipe.html", "schema": "recipe@latest" }
+    { "file": "bench/fixtures/recipe.html", "schema": "recipe@latest" },
+    { "file": "bench/fixtures/public_tender.html", "schema": "public_tenders@latest" }
   ],
   "targets": [
     {
@@ -21,6 +22,12 @@
       "base_url": "http://localhost:8080/v1",
       "api_key_env": "LOCAL_API_KEY",
       "api_key_optional": true
+    },
+    {
+      "name": "native-candle-qwen2.5-3b-q4",
+      "provider": "local",
+      "model": "qwen2.5-3b-instruct-q4",
+      "base_url": "local://"
     },
     {
       "name": "anthropic-haiku",

@@ -23,6 +23,10 @@ pub enum AppError {
     #[error("Schema validation error: {0}")]
     SchemaValidationError(String),
 
+    /// Native local-model loading or generation failed.
+    #[error("Local inference error: {message}")]
+    LocalInferenceError { message: String, retryable: bool },
+
     /// Extracted JSON parsed correctly but does not conform to the target schema.
     #[error("Extraction validation error: {0}")]
     ExtractionValidationError(String),
@@ -73,6 +77,7 @@ impl AppError {
     pub fn is_retryable(&self) -> bool {
         match self {
             AppError::NetworkError(_) | AppError::Timeout(_) | AppError::RateLimitExceeded => true,
+            AppError::LocalInferenceError { retryable, .. } => *retryable,
             AppError::LlmError { retryable, .. } => *retryable,
             AppError::HttpError(msg) => {
                 msg.contains("timeout") || msg.contains("connect") || msg.contains("reset")
@@ -85,6 +90,7 @@ impl AppError {
     pub fn should_trip_circuit(&self) -> bool {
         match self {
             AppError::NetworkError(_) | AppError::Timeout(_) | AppError::RateLimitExceeded => true,
+            AppError::LocalInferenceError { retryable, .. } => *retryable,
             AppError::LlmError {
                 status_code,
                 retryable,
@@ -208,5 +214,22 @@ mod tests {
         assert!(!AppError::ConfigError("missing key".into()).should_trip_circuit());
         assert!(!AppError::DatabaseError("connection lost".into()).should_trip_circuit());
         assert!(!AppError::HttpError("HTTP 404 Not Found".into()).should_trip_circuit());
+    }
+
+    #[test]
+    fn local_inference_errors_follow_their_retryability() {
+        let transient = AppError::LocalInferenceError {
+            message: "out of memory".into(),
+            retryable: true,
+        };
+        assert!(transient.is_retryable());
+        assert!(transient.should_trip_circuit());
+
+        let config = AppError::LocalInferenceError {
+            message: "unsupported model".into(),
+            retryable: false,
+        };
+        assert!(!config.is_retryable());
+        assert!(!config.should_trip_circuit());
     }
 }
