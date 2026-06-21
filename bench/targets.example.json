@@ -1,0 +1,33 @@
+{
+  "fixtures": [
+    { "file": "bench/fixtures/blog.html", "schema": "blog@latest" },
+    { "file": "bench/fixtures/github_repo.html", "schema": "github_repo@latest" },
+    { "file": "bench/fixtures/product.html", "schema": "product@latest" },
+    { "file": "bench/fixtures/news_article.html", "schema": "news_article@latest" },
+    { "file": "bench/fixtures/recipe.html", "schema": "recipe@latest" }
+  ],
+  "targets": [
+    {
+      "name": "openai-gpt-4o-mini",
+      "provider": "openai",
+      "model": "gpt-4o-mini",
+      "base_url": "https://api.openai.com/v1",
+      "api_key_env": "OPENAI_API_KEY"
+    },
+    {
+      "name": "local-llamacpp",
+      "provider": "openai",
+      "model": "qwen2.5-3b-instruct",
+      "base_url": "http://localhost:8080/v1",
+      "api_key_env": "LOCAL_API_KEY",
+      "api_key_optional": true
+    },
+    {
+      "name": "anthropic-haiku",
+      "provider": "anthropic",
+      "model": "claude-haiku-4-5",
+      "base_url": "https://api.anthropic.com/v1",
+      "api_key_env": "ANTHROPIC_API_KEY"
+    }
+  ]
+}

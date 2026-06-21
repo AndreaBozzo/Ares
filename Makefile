@@ -42,10 +42,10 @@ clean: ## Clean build artifacts
 docker-build: ## Build the Docker image
 	docker build -t ares-api:latest .
 
-docker-up: ## Start PostgreSQL with docker compose
+docker-up: ## Start PostgreSQL + pgAdmin with docker compose
 	docker compose up -d
 
-docker-down: ## Stop PostgreSQL
+docker-down: ## Stop PostgreSQL + pgAdmin
 	docker compose down
 
 migrate: ## Run database migrations

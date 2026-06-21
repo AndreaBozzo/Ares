@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Rethinking Backpressure in Async Rust — Foundry Blog</title>
+  <link rel="canonical" href="https://blog.example.com/posts/rethinking-backpressure-async-rust">
+  <meta property="og:title" content="Rethinking Backpressure in Async Rust">
+  <meta property="og:image" content="https://blog.example.com/img/backpressure-hero.png">
+  <meta name="author" content="Mara Vinçek">
+  <meta property="article:published_time" content="2026-05-14">
+  <meta name="description" content="How bounded channels and cooperative yielding propagate backpressure in async Rust.">
+</head>
+<body>
+  <main>
+    <article>
+      <h1>Rethinking Backpressure in Async Rust</h1>
+      <p class="summary">Bounded channels, poll_ready, and cooperative yielding let async services propagate slowness instead of dropping work.</p>
+      <p>When a producer outruns a consumer, something has to give. We argue bounded queues — trading latency for stability — are almost always the right call for long-running services.</p>
+      <ul class="tags">
+        <li><a href="/tag/rust">rust</a></li>
+        <li><a href="/tag/async">async</a></li>
+        <li><a href="/tag/tokio">tokio</a></li>
+      </ul>
+    </article>
+  </main>
+</body>
+</html>

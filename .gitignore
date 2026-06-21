@@ -1,3 +1,6 @@
 /target
 .env
 pgdata/
+
+# Local benchmark config (copy of bench/targets.example.json)
+bench/targets.json

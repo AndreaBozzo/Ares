@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>acme-labs/tempest: A distributed job scheduler for Rust</title>
+  <link rel="canonical" href="https://github.example.com/acme-labs/tempest">
+</head>
+<body>
+  <header>
+    <nav>
+      <a href="/acme-labs">acme-labs</a> / <strong><a href="/acme-labs/tempest">tempest</a></strong>
+    </nav>
+  </header>
+
+  <main>
+    <div class="repo-header">
+      <h1>acme-labs/tempest</h1>
+      <p class="description">A distributed, fault-tolerant job scheduler for Rust with at-least-once delivery.</p>
+
+      <ul class="repo-topics">
+        <li><a href="/topics/rust">rust</a></li>
+        <li><a href="/topics/scheduler">scheduler</a></li>
+        <li><a href="/topics/distributed-systems">distributed-systems</a></li>
+        <li><a href="/topics/tokio">tokio</a></li>
+      </ul>
+
+      <ul class="repo-stats">
+        <li><a href="/acme-labs/tempest/stargazers"><strong>4,812</strong> stars</a></li>
+        <li><a href="/acme-labs/tempest/forks"><strong>317</strong> forks</a></li>
+        <li><a href="/acme-labs/tempest/issues"><strong>63</strong> open issues</a></li>
+      </ul>
+
+      <ul class="repo-meta">
+        <li>Primary language: <span class="lang">Rust</span></li>
+        <li>License: <a href="/acme-labs/tempest/blob/main/LICENSE">Apache-2.0</a></li>
+        <li>Last commit: <relative-time datetime="2026-06-09T11:42:00Z">3 days ago</relative-time></li>
+      </ul>
+    </div>
+
+    <article class="readme">
+      <h2>Tempest</h2>
+      <p>
+        Tempest schedules and runs background jobs across a cluster of workers. It uses a
+        Postgres-backed queue for durability, a gossip protocol for worker discovery, and a
+        circuit breaker to shed load from failing downstreams. Jobs are delivered at least
+        once; handlers are expected to be idempotent.
+      </p>
+      <h3>Features</h3>
+      <ul>
+        <li>At-least-once delivery with configurable retry and backoff</li>
+        <li>Cron and one-shot scheduling</li>
+        <li>Horizontal scaling with no single coordinator</li>
+        <li>Graceful shutdown and in-flight job draining</li>
+      </ul>
+    </article>
+  </main>
+
+  <footer>
+    <p>© 2026 acme-labs</p>
+  </footer>
+</body>
+</html>

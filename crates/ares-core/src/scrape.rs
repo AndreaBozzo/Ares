@@ -22,6 +22,8 @@ where
     store: Option<S>,
     model_name: String,
     skip_unchanged: bool,
+    validate: bool,
+    max_content_chars: Option<usize>,
     content_cache: Option<ContentCache>,
     extraction_cache: Option<ExtractionCache>,
 }
@@ -42,6 +44,8 @@ where
             store: None,
             model_name,
             skip_unchanged: false,
+            validate: true,
+            max_content_chars: None,
             content_cache: None,
             extraction_cache: None,
         }
@@ -56,6 +60,8 @@ where
             store: Some(store),
             model_name,
             skip_unchanged: false,
+            validate: true,
+            max_content_chars: None,
             content_cache: None,
             extraction_cache: None,
         }
@@ -64,6 +70,27 @@ where
     /// When enabled, skip saving if the data hash matches the previous extraction.
     pub fn with_skip_unchanged(mut self, skip: bool) -> Self {
         self.skip_unchanged = skip;
+        self
+    }
+
+    /// Validate extracted output against the schema before hashing/saving.
+    ///
+    /// Enabled by default. When validation fails, [`scrape`](Self::scrape)
+    /// returns [`AppError::ExtractionValidationError`] and nothing is persisted.
+    pub fn with_validation(mut self, validate: bool) -> Self {
+        self.validate = validate;
+        self
+    }
+
+    /// Cap the cleaned content (in characters) sent to the extractor.
+    ///
+    /// Real pages can clean to tens of KB of Markdown; bounding the input keeps
+    /// extraction within timeout/cost limits (especially for slower local
+    /// models). `None` (default) sends the full cleaned content. The cap is
+    /// applied after the grounded metadata block is prepended, so page metadata
+    /// is preserved even when the body is truncated.
+    pub fn with_max_content_chars(mut self, max: Option<usize>) -> Self {
+        self.max_content_chars = max;
         self
     }
 
@@ -123,6 +150,22 @@ where
             }
         );
 
+        // 2b. Optionally cap the cleaned content sent to the extractor. Bounds
+        // timeout/cost on very large pages; the grounded metadata block is at
+        // the front, so it survives truncation of the body.
+        let markdown = match self.max_content_chars {
+            Some(max) if markdown.chars().count() > max => {
+                let capped: String = markdown.chars().take(max).collect();
+                tracing::warn!(
+                    original_chars = markdown.chars().count(),
+                    max,
+                    "cleaned content truncated to max_content_chars"
+                );
+                capped
+            }
+            _ => markdown,
+        };
+
         // 3. Hash content and schema (before extraction, needed for extraction cache key)
         let content_hash = compute_hash(&markdown);
         let schema_hash = compute_hash(&schema.to_string());
@@ -153,6 +196,24 @@ where
             tracing::info!("Extracting with model {} ...", self.model_name);
             self.extractor.extract(&markdown, schema).await?
         };
+
+        // 4b. Validate extracted output against the schema before hashing/saving.
+        // Runs for fresh and cached results alike so every path (CLI, API,
+        // worker, crawl) gets the same guarantee. After validation passes, a
+        // heuristic groundedness check warns (without failing) when short atomic
+        // values look absent from the source — a hallucination signal that
+        // schema validation alone can't catch.
+        if self.validate {
+            crate::schema::validate_extracted_output(schema, &extracted)?;
+
+            let ungrounded = crate::groundedness::ungrounded_fields(&markdown, &extracted);
+            if !ungrounded.is_empty() {
+                tracing::warn!(
+                    ungrounded_fields = ?ungrounded,
+                    "extracted values not grounded in source content (possible hallucination)"
+                );
+            }
+        }
 
         // 5. Hash extracted data
         let data_hash = compute_hash(&extracted.to_string());
@@ -441,6 +502,78 @@ mod tests {
             .unwrap_err();
 
         assert!(matches!(err, AppError::DatabaseError(_)));
+    }
+
+    // -----------------------------------------------------------------------
+    // Output validation tests
+    // -----------------------------------------------------------------------
+
+    fn strict_schema() -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": { "title": { "type": "string" } },
+            "required": ["title"],
+            "additionalProperties": false
+        })
+    }
+
+    #[tokio::test]
+    async fn extraction_failing_validation_errors() {
+        // Extractor returns an object missing the required `title` field.
+        let svc = ScrapeService::<_, _, _, NullStore>::new(
+            MockFetcher::new("<html>hello</html>"),
+            MockCleaner::passthrough(),
+            MockExtractor::new(serde_json::json!({ "wrong": 1 })),
+            "test-model".into(),
+        );
+
+        let err = svc
+            .scrape("https://example.com", &strict_schema(), "test")
+            .await
+            .unwrap_err();
+
+        assert!(matches!(err, AppError::ExtractionValidationError(_)));
+    }
+
+    #[tokio::test]
+    async fn invalid_extraction_is_not_persisted() {
+        let store = MockStore::empty();
+        let svc = ScrapeService::with_store(
+            MockFetcher::new("<html>hello</html>"),
+            MockCleaner::passthrough(),
+            MockExtractor::new(serde_json::json!({ "title": 42 })), // wrong type
+            store.clone(),
+            "test-model".into(),
+        );
+
+        let err = svc
+            .scrape("https://example.com", &strict_schema(), "test")
+            .await
+            .unwrap_err();
+
+        assert!(matches!(err, AppError::ExtractionValidationError(_)));
+        // Nothing should have been saved.
+        assert_eq!(store.saved.lock().unwrap().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn validation_can_be_disabled() {
+        // Same mismatched output, but validation turned off — scrape succeeds.
+        let extracted = serde_json::json!({ "wrong": 1 });
+        let svc = ScrapeService::<_, _, _, NullStore>::new(
+            MockFetcher::new("<html>hello</html>"),
+            MockCleaner::passthrough(),
+            MockExtractor::new(extracted.clone()),
+            "test-model".into(),
+        )
+        .with_validation(false);
+
+        let result = svc
+            .scrape("https://example.com", &strict_schema(), "test")
+            .await
+            .unwrap();
+
+        assert_eq!(result.extracted_data, extracted);
     }
 
     // -----------------------------------------------------------------------

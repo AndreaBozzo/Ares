@@ -1,0 +1,74 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "PublicTender",
+  "type": "object",
+  "properties": {
+    "title": {
+      "type": "string",
+      "description": "Title of the tender / contract notice"
+    },
+    "reference": {
+      "type": "string",
+      "description": "Notice or reference number (e.g. TED OJS number, contract ID)"
+    },
+    "buyer": {
+      "type": "string",
+      "description": "Contracting authority / buyer organisation name"
+    },
+    "country": {
+      "type": "string",
+      "description": "Country of the contracting authority"
+    },
+    "category": {
+      "type": "string",
+      "description": "Type of contract: works, services, or supplies"
+    },
+    "cpv_codes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Common Procurement Vocabulary (CPV) codes"
+    },
+    "publication_date": {
+      "type": "string",
+      "description": "Date the notice was published"
+    },
+    "deadline": {
+      "type": "string",
+      "description": "Submission / tender response deadline"
+    },
+    "value": {
+      "type": "string",
+      "description": "Estimated or total contract value, including currency (e.g. €1,200,000)"
+    },
+    "currency": {
+      "type": "string",
+      "description": "ISO 4217 currency code (e.g. EUR, GBP, USD)"
+    },
+    "procedure": {
+      "type": "string",
+      "description": "Procurement procedure (e.g. Open, Restricted, Negotiated)"
+    },
+    "status": {
+      "type": "string",
+      "description": "Notice status (e.g. Open, Closed, Awarded)"
+    },
+    "description": {
+      "type": "string",
+      "description": "Short description of the goods, works, or services required"
+    },
+    "url": {
+      "type": "string",
+      "description": "Canonical URL of the tender notice"
+    }
+  },
+  "required": [
+    "title",
+    "buyer",
+    "country",
+    "deadline",
+    "description",
+    "url"
+  ]
+}

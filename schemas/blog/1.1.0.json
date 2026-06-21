@@ -5,34 +5,34 @@
   "properties": {
     "title": {
       "type": "string",
-      "description": "Title of the blog post"
+      "minLength": 1
     },
     "author": {
       "type": "string",
-      "description": "Author or byline of the post"
+      "minLength": 1
     },
     "publish_date": {
       "type": "string",
-      "description": "Date the post was published"
+      "minLength": 1
     },
     "summary": {
       "type": "string",
-      "description": "Short summary or lead paragraph of the post"
+      "minLength": 1
     },
     "tags": {
       "type": "array",
       "items": {
         "type": "string"
       },
-      "description": "Tags or topic labels for the post"
+      "minItems": 1
     },
     "hero_image": {
       "type": "string",
-      "description": "URL of the post's hero or featured image"
+      "minLength": 1
     },
     "url": {
       "type": "string",
-      "description": "Canonical URL of the blog post"
+      "minLength": 1
     }
   },
   "required": [

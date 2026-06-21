@@ -6,6 +6,7 @@ license.workspace = true
 description = "CLI entry point for Ares AI scraper"
 
 [features]
+anthropic = ["ares-client/anthropic"]
 browser = ["ares-client/browser"]
 
 [[bin]]

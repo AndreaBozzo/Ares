@@ -21,6 +21,52 @@ pub fn validate_schema(value: &serde_json::Value) -> Result<(), AppError> {
     Ok(())
 }
 
+/// Maximum number of validation failures reported in a single error message.
+const MAX_VALIDATION_ERRORS: usize = 10;
+
+/// Validate that an extracted JSON `value` conforms to `schema`.
+///
+/// Unlike [`validate_schema`], which checks that the schema document itself is a
+/// well-formed JSON Schema, this checks that a *value* (typically an LLM
+/// extraction result) matches the shape the schema describes.
+///
+/// Returns [`AppError::ExtractionValidationError`] listing the failures when the
+/// value does not conform, or [`AppError::SchemaError`] if `schema` is not a
+/// usable JSON Schema. The failure list is capped at [`MAX_VALIDATION_ERRORS`]
+/// to keep messages bounded on badly-shaped output.
+pub fn validate_extracted_output(
+    schema: &serde_json::Value,
+    value: &serde_json::Value,
+) -> Result<(), AppError> {
+    let validator = jsonschema::validator_for(schema)
+        .map_err(|e| AppError::SchemaError(format!("Invalid JSON Schema: {e}")))?;
+
+    // Collect one extra so we can tell whether the list was truncated.
+    let mut errors: Vec<String> = validator
+        .iter_errors(value)
+        .take(MAX_VALIDATION_ERRORS + 1)
+        .map(|err| {
+            let path = err.instance_path();
+            if path.as_str().is_empty() {
+                err.to_string()
+            } else {
+                format!("{err} (at `{path}`)")
+            }
+        })
+        .collect();
+
+    if errors.is_empty() {
+        return Ok(());
+    }
+
+    if errors.len() > MAX_VALIDATION_ERRORS {
+        errors.truncate(MAX_VALIDATION_ERRORS);
+        errors.push("… (additional errors omitted)".to_string());
+    }
+
+    Err(AppError::ExtractionValidationError(errors.join("; ")))
+}
+
 /// A fully resolved schema: path, canonical name, and parsed JSON.
 #[derive(Debug, Clone)]
 pub struct ResolvedSchema {
@@ -878,6 +924,75 @@ mod tests {
         // Original content should be preserved
         let resolved = resolver.resolve("test@1.0.0").unwrap();
         assert_eq!(resolved.schema, valid);
+    }
+
+    // -----------------------------------------------------------------------
+    // validate_extracted_output tests
+    // -----------------------------------------------------------------------
+
+    fn person_schema() -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "title": { "type": "string" },
+                "count": { "type": "integer" }
+            },
+            "required": ["title"],
+            "additionalProperties": false
+        })
+    }
+
+    #[test]
+    fn test_validate_output_valid() {
+        let value = serde_json::json!({ "title": "Hello", "count": 3 });
+        assert!(validate_extracted_output(&person_schema(), &value).is_ok());
+    }
+
+    #[test]
+    fn test_validate_output_wrong_type() {
+        // `title` should be a string, not a number.
+        let value = serde_json::json!({ "title": 42 });
+        let err = validate_extracted_output(&person_schema(), &value).unwrap_err();
+        assert!(matches!(err, AppError::ExtractionValidationError(_)));
+        assert!(err.to_string().contains("title") || err.to_string().contains("string"));
+    }
+
+    #[test]
+    fn test_validate_output_missing_required_field() {
+        // Valid JSON object, but missing the required `title`.
+        let value = serde_json::json!({ "count": 1 });
+        let err = validate_extracted_output(&person_schema(), &value).unwrap_err();
+        assert!(matches!(err, AppError::ExtractionValidationError(_)));
+    }
+
+    #[test]
+    fn test_validate_output_wrong_shape() {
+        // Schema expects an object; the value is an array.
+        let value = serde_json::json!([1, 2, 3]);
+        let err = validate_extracted_output(&person_schema(), &value).unwrap_err();
+        assert!(matches!(err, AppError::ExtractionValidationError(_)));
+    }
+
+    #[test]
+    fn test_validate_output_rejects_additional_properties() {
+        let value = serde_json::json!({ "title": "Hi", "unexpected": true });
+        let err = validate_extracted_output(&person_schema(), &value).unwrap_err();
+        assert!(matches!(err, AppError::ExtractionValidationError(_)));
+    }
+
+    #[test]
+    fn test_validate_output_empty_schema_accepts_anything() {
+        // An empty schema matches any value.
+        let schema = serde_json::json!({});
+        assert!(validate_extracted_output(&schema, &serde_json::json!({"a": 1})).is_ok());
+        assert!(validate_extracted_output(&schema, &serde_json::json!("text")).is_ok());
+    }
+
+    #[test]
+    fn test_validate_output_invalid_schema_errors() {
+        let schema = serde_json::json!({ "type": "not_a_real_type" });
+        let err = validate_extracted_output(&schema, &serde_json::json!({})).unwrap_err();
+        assert!(matches!(err, AppError::SchemaError(_)));
     }
 
     #[test]

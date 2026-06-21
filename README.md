@@ -129,12 +129,13 @@ All external dependencies are behind traits (`Fetcher`, `Cleaner`, `Extractor`, 
 git clone <repo-url> && cd Ares
 cargo build
 
-# Start PostgreSQL
+# Start PostgreSQL + pgAdmin
 docker compose up -d
 
 # Configure environment
 cp .env.example .env
-# Edit .env with your API key and settings
+# Edit .env with your API key. The default DATABASE_URL already matches
+# the compose `db` service (ares_user / password / ares_db).
 
 # One-shot scrape (stdout only)
 cargo run -- scrape -u https://example.com -s schemas/blog/1.0.0.json
@@ -165,8 +166,9 @@ One-shot extraction. Fetches the URL, cleans HTML to Markdown, sends it to the L
 |---|---|---|
 | `-u, --url` | | Target URL |
 | `-s, --schema` | | Schema path or `name@version` |
-| `-m, --model` | `ARES_MODEL` | LLM model (e.g., `gpt-4o-mini`) |
-| `-b, --base-url` | `ARES_BASE_URL` | API base URL (default: OpenAI) |
+| `-m, --model` | `ARES_MODEL` | LLM model (e.g., `gpt-4o-mini`, `claude-haiku-4-5`) |
+| `--provider` | `ARES_PROVIDER` | `openai` (default) or `anthropic` (requires the `anthropic` feature) |
+| `-b, --base-url` | `ARES_BASE_URL` | API base URL (defaults to the selected provider's endpoint) |
 | `-a, --api-key` | `ARES_API_KEY` | API key |
 | `--save` | | Persist result to database |
 | `--schema-name` | | Override schema name for storage |
@@ -204,6 +206,7 @@ Start a background worker that polls the job queue, processes scrape jobs throug
 | `--worker-id` | | Custom worker ID (auto-generated if omitted) |
 | `--poll-interval` | | Seconds between job queue polls (default: 5) |
 | `-a, --api-key` | `ARES_API_KEY` | API key |
+| `--provider` | `ARES_PROVIDER` | `openai` (default) or `anthropic` (requires the `anthropic` feature) |
 | `--browser` | | Use headless browser for JS-rendered pages (requires `browser` feature) |
 | `--fetch-timeout` | | HTTP fetch timeout in seconds (default: 30) |
 | `--llm-timeout` | | LLM API timeout in seconds (default: 120) |
@@ -320,7 +323,8 @@ Reference by path (`schemas/blog/1.0.0.json`) or by name (`blog@1.0.0`, `blog@la
 |---|---|---|---|
 | `ARES_API_KEY` | Yes | | LLM API key |
 | `ARES_MODEL` | Yes | | LLM model name |
-| `ARES_BASE_URL` | No | `https://api.openai.com/v1` | OpenAI-compatible endpoint |
+| `ARES_PROVIDER` | No | `openai` | LLM provider: `openai` (OpenAI-compatible) or `anthropic` (Claude) |
+| `ARES_BASE_URL` | No | provider default | API base URL (defaults to the provider's endpoint) |
 | `DATABASE_URL` | For persistence | | PostgreSQL connection string |
 | `DATABASE_MAX_CONNECTIONS` | No | `5` | PostgreSQL connection pool size |
 | `ARES_ADMIN_TOKEN` | No | | Bearer token for REST API auth |
@@ -340,15 +344,59 @@ export ARES_BASE_URL="https://generativelanguage.googleapis.com/v1beta/openai"
 export ARES_MODEL="gemini-2.5-flash"
 ```
 
+### Anthropic (Claude)
+
+Anthropic's API is not OpenAI-compatible (it uses the native Messages API), so it
+lives behind the `anthropic` build feature and the `anthropic` provider. Build with
+the feature, then select the provider:
+
+```bash
+export ARES_PROVIDER="anthropic"
+export ARES_API_KEY="sk-ant-..."
+export ARES_MODEL="claude-haiku-4-5"   # or claude-sonnet-4-6 for complex schemas
+
+# ARES_BASE_URL defaults to https://api.anthropic.com/v1 for the anthropic provider
+cargo run --features anthropic -- scrape -u https://example.com -s blog@latest
+```
+
+| Model | Best for |
+|---|---|
+| `claude-haiku-4-5` | Fast, cheap, high-volume extraction of simple schemas |
+| `claude-sonnet-4-6` | Complex schemas and nuanced content (higher quality, higher cost) |
+
+Extraction uses forced **tool use** under the hood: the JSON Schema is passed as the
+tool's `input_schema` and Claude is required to call it, so the result is a structured
+object that is then validated against the schema like any other provider. When running
+a **worker** with `--provider anthropic`, make sure jobs target an Anthropic base URL
+(the per-job default is the OpenAI endpoint).
+
+### Local inference
+
+Because the OpenAI provider works with any OpenAI-compatible endpoint, you can run
+extraction against a **local** model (llama.cpp, Ollama, LM Studio) with no rebuild —
+just point `ARES_BASE_URL` at the local server. See
+[docs/local-inference.md](docs/local-inference.md) for the full recipe, recommended
+laptop-sized models, and the [`bench`](bench) harness that compares local vs hosted on
+output validity, latency, and a cost proxy.
+
+```bash
+export ARES_BASE_URL=http://localhost:8080/v1   # e.g. llama-server
+export ARES_MODEL=qwen2.5-3b-instruct
+export ARES_API_KEY=sk-local                    # local servers usually ignore it
+cargo run -- scrape -u https://example.com -s blog@latest
+```
+
 ## Docker
 
 ```bash
 # Build the image
 docker build -t ares-api:latest .
 
-# Run with docker compose (PostgreSQL + pgAdmin + server)
+# Start the dependencies with docker compose (PostgreSQL + pgAdmin)
 docker compose up -d
 ```
+
+`docker compose up -d` starts PostgreSQL (port 5432) and pgAdmin (port 5050). The application `server` service is included but commented out in `compose.yml` — uncomment it to run `ares-api` in the same stack, or run the built image directly with `docker run -p 3000:3000 --env-file .env ares-api:latest`.
 
 The Dockerfile uses a multi-stage build (Rust builder → Debian slim runtime) with Chromium pre-installed for browser-based scraping. The release binary is compiled with LTO and symbol stripping for minimal image size.
 

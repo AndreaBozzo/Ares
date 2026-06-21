@@ -170,7 +170,9 @@ pub struct ScrapeRequest {
     pub schema_name: String,
     /// LLM model override (falls back to ARES_MODEL env)
     pub model: Option<String>,
-    /// API base URL override (falls back to ARES_BASE_URL env)
+    /// LLM provider: "openai" (default) or "anthropic" (falls back to ARES_PROVIDER env)
+    pub provider: Option<String>,
+    /// API base URL override (falls back to ARES_BASE_URL env, then the provider default)
     pub base_url: Option<String>,
     /// Persist result to database (default: true)
     pub save: Option<bool>,

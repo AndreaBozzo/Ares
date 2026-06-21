@@ -19,13 +19,21 @@ pub enum AppError {
     #[error("Cleaner error: {0}")]
     CleanerError(String),
 
-    /// Extracted JSON does not match the expected schema.
+    /// LLM output could not be parsed as JSON (malformed response).
     #[error("Schema validation error: {0}")]
     SchemaValidationError(String),
+
+    /// Extracted JSON parsed correctly but does not conform to the target schema.
+    #[error("Extraction validation error: {0}")]
+    ExtractionValidationError(String),
 
     /// Schema resolution failed (file not found, invalid format, etc.).
     #[error("Schema error: {0}")]
     SchemaError(String),
+
+    /// A client-supplied input was invalid (bad parameter or unsupported option).
+    #[error("Invalid input: {0}")]
+    InvalidInput(String),
 
     /// A specific schema version was not found.
     #[error("Schema not found: {name}@{version}")]
