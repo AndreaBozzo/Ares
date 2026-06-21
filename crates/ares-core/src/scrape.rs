@@ -168,9 +168,20 @@ where
 
         // 4b. Validate extracted output against the schema before hashing/saving.
         // Runs for fresh and cached results alike so every path (CLI, API,
-        // worker, crawl) gets the same guarantee.
+        // worker, crawl) gets the same guarantee. After validation passes, a
+        // heuristic groundedness check warns (without failing) when short atomic
+        // values look absent from the source — a hallucination signal that
+        // schema validation alone can't catch.
         if self.validate {
             crate::schema::validate_extracted_output(schema, &extracted)?;
+
+            let ungrounded = crate::groundedness::ungrounded_fields(&markdown, &extracted);
+            if !ungrounded.is_empty() {
+                tracing::warn!(
+                    ungrounded_fields = ?ungrounded,
+                    "extracted values not grounded in source content (possible hallucination)"
+                );
+            }
         }
 
         // 5. Hash extracted data

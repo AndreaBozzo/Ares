@@ -19,7 +19,7 @@ use std::time::Instant;
 
 use ares_client::{HtmdCleaner, Provider, ProviderExtractor};
 use ares_core::traits::{Cleaner, Extractor};
-use ares_core::{SchemaResolver, validate_extracted_output};
+use ares_core::{SchemaResolver, ungrounded_fields, validate_extracted_output};
 use serde::Deserialize;
 
 #[derive(Deserialize)]
@@ -75,6 +75,9 @@ struct Row {
     latency_ms: u128,
     input_chars: usize,
     output_chars: usize,
+    /// Count of extracted string values that look absent from the source
+    /// (hallucination signal) — only meaningful for `valid` rows.
+    ungrounded: usize,
     detail: String,
 }
 
@@ -160,10 +163,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let row = match result {
                 Ok(value) => {
                     let output = value.to_string();
-                    let (status, detail) = match validate_extracted_output(&fx.schema, &value) {
-                        Ok(()) => (Status::Valid, String::new()),
-                        Err(e) => (Status::Invalid, e.to_string()),
-                    };
+                    let (status, detail, ungrounded) =
+                        match validate_extracted_output(&fx.schema, &value) {
+                            Ok(()) => {
+                                let u = ungrounded_fields(&fx.markdown, &value);
+                                let detail = if u.is_empty() {
+                                    String::new()
+                                } else {
+                                    format!("ungrounded: {}", u.join(", "))
+                                };
+                                (Status::Valid, detail, u.len())
+                            }
+                            Err(e) => (Status::Invalid, e.to_string(), 0),
+                        };
                     Row {
                         fixture: fx.name.clone(),
                         target: target.name.clone(),
@@ -171,6 +183,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         latency_ms,
                         input_chars: fx.markdown.chars().count(),
                         output_chars: output.chars().count(),
+                        ungrounded,
                         detail,
                     }
                 }
@@ -181,6 +194,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     latency_ms,
                     input_chars: fx.markdown.chars().count(),
                     output_chars: 0,
+                    ungrounded: 0,
                     detail: e.to_string(),
                 },
             };
@@ -201,6 +215,7 @@ fn skipped(fixture: &str, target: &Target, detail: String) -> Row {
         latency_ms: 0,
         input_chars: 0,
         output_chars: 0,
+        ungrounded: 0,
         detail,
     }
 }
@@ -213,24 +228,28 @@ fn errored(fixture: &str, target: &Target, detail: String) -> Row {
         latency_ms: 0,
         input_chars: 0,
         output_chars: 0,
+        ungrounded: 0,
         detail,
     }
 }
 
 fn print_results(rows: &[Row]) {
     println!("\n## Results\n");
-    println!("| fixture | target | status | latency (ms) | in tokens≈ | out tokens≈ | detail |");
-    println!("|---|---|---|---:|---:|---:|---|");
+    println!(
+        "| fixture | target | status | latency (ms) | in tokens≈ | out tokens≈ | ungrounded | detail |"
+    );
+    println!("|---|---|---|---:|---:|---:|---:|---|");
     for r in rows {
         let detail = truncate_detail(&r.detail);
         println!(
-            "| {} | {} | {} | {} | {} | {} | {} |",
+            "| {} | {} | {} | {} | {} | {} | {} | {} |",
             short_path(&r.fixture),
             r.target,
             r.status.label(),
             r.latency_ms,
             approx_tokens(r.input_chars),
             approx_tokens(r.output_chars),
+            r.ungrounded,
             detail,
         );
     }
@@ -238,8 +257,8 @@ fn print_results(rows: &[Row]) {
 
 fn print_summary(targets: &[Target], rows: &[Row]) {
     println!("\n## Summary per target\n");
-    println!("| target | valid/total | mean latency (ms) | avg out tokens≈ |");
-    println!("|---|---:|---:|---:|");
+    println!("| target | valid/total | ungrounded (total) | mean latency (ms) | avg out tokens≈ |");
+    println!("|---|---:|---:|---:|---:|");
     for target in targets {
         let tr: Vec<&Row> = rows.iter().filter(|r| r.target == target.name).collect();
         let ran: Vec<&&Row> = tr
@@ -250,6 +269,7 @@ fn print_summary(targets: &[Target], rows: &[Row]) {
             .iter()
             .filter(|r| matches!(r.status, Status::Valid))
             .count();
+        let ungrounded_total: usize = ran.iter().map(|r| r.ungrounded).sum();
         let mean_latency = if ran.is_empty() {
             0
         } else {
@@ -264,10 +284,11 @@ fn print_summary(targets: &[Target], rows: &[Row]) {
                 / ran.len()
         };
         println!(
-            "| {} | {}/{} | {} | {} |",
+            "| {} | {}/{} | {} | {} | {} |",
             target.name,
             valid,
             ran.len(),
+            ungrounded_total,
             mean_latency,
             avg_out,
         );
