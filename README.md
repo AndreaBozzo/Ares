@@ -129,12 +129,13 @@ All external dependencies are behind traits (`Fetcher`, `Cleaner`, `Extractor`, 
 git clone <repo-url> && cd Ares
 cargo build
 
-# Start PostgreSQL
+# Start PostgreSQL + pgAdmin
 docker compose up -d
 
 # Configure environment
 cp .env.example .env
-# Edit .env with your API key and settings
+# Edit .env with your API key. The default DATABASE_URL already matches
+# the compose `db` service (ares_user / password / ares_db).
 
 # One-shot scrape (stdout only)
 cargo run -- scrape -u https://example.com -s schemas/blog/1.0.0.json
@@ -346,9 +347,11 @@ export ARES_MODEL="gemini-2.5-flash"
 # Build the image
 docker build -t ares-api:latest .
 
-# Run with docker compose (PostgreSQL + pgAdmin + server)
+# Start the dependencies with docker compose (PostgreSQL + pgAdmin)
 docker compose up -d
 ```
+
+`docker compose up -d` starts PostgreSQL (port 5432) and pgAdmin (port 5050). The application `server` service is included but commented out in `compose.yml` — uncomment it to run `ares-api` in the same stack, or run the built image directly with `docker run -p 3000:3000 --env-file .env ares-api:latest`.
 
 The Dockerfile uses a multi-stage build (Rust builder → Debian slim runtime) with Chromium pre-installed for browser-based scraping. The release binary is compiled with LTO and symbol stripping for minimal image size.
 
