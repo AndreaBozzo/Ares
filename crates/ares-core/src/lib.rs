@@ -28,7 +28,8 @@ pub use job_queue::JobQueue;
 pub use models::{Extraction, ExtractionSchema, NewExtraction, ScrapeResult, compute_hash};
 pub use proxy::{ProxyConfig, ProxyEntry, RotationStrategy, TlsBackend};
 pub use schema::{
-    ResolvedSchema, SchemaEntry, SchemaResolver, derive_schema_name, validate_schema,
+    ResolvedSchema, SchemaEntry, SchemaResolver, derive_schema_name, validate_extracted_output,
+    validate_schema,
 };
 pub use scrape::ScrapeService;
 pub use stealth::StealthConfig;

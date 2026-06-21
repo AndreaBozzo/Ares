@@ -20,6 +20,11 @@ impl IntoResponse for ApiError {
             AppError::SchemaValidationError(_) | AppError::SchemaError(_) => {
                 (StatusCode::BAD_REQUEST, "validation_error")
             }
+            // The request was well-formed, but the extraction the model produced
+            // did not conform to the schema — surface as Unprocessable Entity.
+            AppError::ExtractionValidationError(_) => {
+                (StatusCode::UNPROCESSABLE_ENTITY, "extraction_validation_error")
+            }
             AppError::SchemaNotFound { .. } => (StatusCode::NOT_FOUND, "not_found"),
             AppError::SerializationError(_) => (StatusCode::BAD_REQUEST, "serialization_error"),
             AppError::DatabaseError(_) => (StatusCode::INTERNAL_SERVER_ERROR, "database_error"),

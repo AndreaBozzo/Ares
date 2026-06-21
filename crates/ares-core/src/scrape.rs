@@ -22,6 +22,7 @@ where
     store: Option<S>,
     model_name: String,
     skip_unchanged: bool,
+    validate: bool,
     content_cache: Option<ContentCache>,
     extraction_cache: Option<ExtractionCache>,
 }
@@ -42,6 +43,7 @@ where
             store: None,
             model_name,
             skip_unchanged: false,
+            validate: true,
             content_cache: None,
             extraction_cache: None,
         }
@@ -56,6 +58,7 @@ where
             store: Some(store),
             model_name,
             skip_unchanged: false,
+            validate: true,
             content_cache: None,
             extraction_cache: None,
         }
@@ -64,6 +67,15 @@ where
     /// When enabled, skip saving if the data hash matches the previous extraction.
     pub fn with_skip_unchanged(mut self, skip: bool) -> Self {
         self.skip_unchanged = skip;
+        self
+    }
+
+    /// Validate extracted output against the schema before hashing/saving.
+    ///
+    /// Enabled by default. When validation fails, [`scrape`](Self::scrape)
+    /// returns [`AppError::ExtractionValidationError`] and nothing is persisted.
+    pub fn with_validation(mut self, validate: bool) -> Self {
+        self.validate = validate;
         self
     }
 
@@ -153,6 +165,13 @@ where
             tracing::info!("Extracting with model {} ...", self.model_name);
             self.extractor.extract(&markdown, schema).await?
         };
+
+        // 4b. Validate extracted output against the schema before hashing/saving.
+        // Runs for fresh and cached results alike so every path (CLI, API,
+        // worker, crawl) gets the same guarantee.
+        if self.validate {
+            crate::schema::validate_extracted_output(schema, &extracted)?;
+        }
 
         // 5. Hash extracted data
         let data_hash = compute_hash(&extracted.to_string());
@@ -441,6 +460,78 @@ mod tests {
             .unwrap_err();
 
         assert!(matches!(err, AppError::DatabaseError(_)));
+    }
+
+    // -----------------------------------------------------------------------
+    // Output validation tests
+    // -----------------------------------------------------------------------
+
+    fn strict_schema() -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": { "title": { "type": "string" } },
+            "required": ["title"],
+            "additionalProperties": false
+        })
+    }
+
+    #[tokio::test]
+    async fn extraction_failing_validation_errors() {
+        // Extractor returns an object missing the required `title` field.
+        let svc = ScrapeService::<_, _, _, NullStore>::new(
+            MockFetcher::new("<html>hello</html>"),
+            MockCleaner::passthrough(),
+            MockExtractor::new(serde_json::json!({ "wrong": 1 })),
+            "test-model".into(),
+        );
+
+        let err = svc
+            .scrape("https://example.com", &strict_schema(), "test")
+            .await
+            .unwrap_err();
+
+        assert!(matches!(err, AppError::ExtractionValidationError(_)));
+    }
+
+    #[tokio::test]
+    async fn invalid_extraction_is_not_persisted() {
+        let store = MockStore::empty();
+        let svc = ScrapeService::with_store(
+            MockFetcher::new("<html>hello</html>"),
+            MockCleaner::passthrough(),
+            MockExtractor::new(serde_json::json!({ "title": 42 })), // wrong type
+            store.clone(),
+            "test-model".into(),
+        );
+
+        let err = svc
+            .scrape("https://example.com", &strict_schema(), "test")
+            .await
+            .unwrap_err();
+
+        assert!(matches!(err, AppError::ExtractionValidationError(_)));
+        // Nothing should have been saved.
+        assert_eq!(store.saved.lock().unwrap().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn validation_can_be_disabled() {
+        // Same mismatched output, but validation turned off — scrape succeeds.
+        let extracted = serde_json::json!({ "wrong": 1 });
+        let svc = ScrapeService::<_, _, _, NullStore>::new(
+            MockFetcher::new("<html>hello</html>"),
+            MockCleaner::passthrough(),
+            MockExtractor::new(extracted.clone()),
+            "test-model".into(),
+        )
+        .with_validation(false);
+
+        let result = svc
+            .scrape("https://example.com", &strict_schema(), "test")
+            .await
+            .unwrap();
+
+        assert_eq!(result.extracted_data, extracted);
     }
 
     // -----------------------------------------------------------------------
