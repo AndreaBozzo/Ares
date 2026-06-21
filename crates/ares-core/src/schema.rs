@@ -991,8 +991,7 @@ mod tests {
     #[test]
     fn test_validate_output_invalid_schema_errors() {
         let schema = serde_json::json!({ "type": "not_a_real_type" });
-        let err =
-            validate_extracted_output(&schema, &serde_json::json!({})).unwrap_err();
+        let err = validate_extracted_output(&schema, &serde_json::json!({})).unwrap_err();
         assert!(matches!(err, AppError::SchemaError(_)));
     }
 
