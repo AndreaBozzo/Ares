@@ -23,6 +23,7 @@ where
     model_name: String,
     skip_unchanged: bool,
     validate: bool,
+    max_content_chars: Option<usize>,
     content_cache: Option<ContentCache>,
     extraction_cache: Option<ExtractionCache>,
 }
@@ -44,6 +45,7 @@ where
             model_name,
             skip_unchanged: false,
             validate: true,
+            max_content_chars: None,
             content_cache: None,
             extraction_cache: None,
         }
@@ -59,6 +61,7 @@ where
             model_name,
             skip_unchanged: false,
             validate: true,
+            max_content_chars: None,
             content_cache: None,
             extraction_cache: None,
         }
@@ -76,6 +79,18 @@ where
     /// returns [`AppError::ExtractionValidationError`] and nothing is persisted.
     pub fn with_validation(mut self, validate: bool) -> Self {
         self.validate = validate;
+        self
+    }
+
+    /// Cap the cleaned content (in characters) sent to the extractor.
+    ///
+    /// Real pages can clean to tens of KB of Markdown; bounding the input keeps
+    /// extraction within timeout/cost limits (especially for slower local
+    /// models). `None` (default) sends the full cleaned content. The cap is
+    /// applied after the grounded metadata block is prepended, so page metadata
+    /// is preserved even when the body is truncated.
+    pub fn with_max_content_chars(mut self, max: Option<usize>) -> Self {
+        self.max_content_chars = max;
         self
     }
 
@@ -134,6 +149,22 @@ where
                 100 - (markdown.len() * 100 / html.len())
             }
         );
+
+        // 2b. Optionally cap the cleaned content sent to the extractor. Bounds
+        // timeout/cost on very large pages; the grounded metadata block is at
+        // the front, so it survives truncation of the body.
+        let markdown = match self.max_content_chars {
+            Some(max) if markdown.chars().count() > max => {
+                let capped: String = markdown.chars().take(max).collect();
+                tracing::warn!(
+                    original_chars = markdown.chars().count(),
+                    max,
+                    "cleaned content truncated to max_content_chars"
+                );
+                capped
+            }
+            _ => markdown,
+        };
 
         // 3. Hash content and schema (before extraction, needed for extraction cache key)
         let content_hash = compute_hash(&markdown);

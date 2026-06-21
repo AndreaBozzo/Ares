@@ -191,6 +191,10 @@ enum Commands {
         #[arg(long, env = "ARES_CACHE_TTL", default_value_t = 3600)]
         cache_ttl: u64,
 
+        /// Cap cleaned-content characters sent to the model (bounds latency/cost on large pages)
+        #[arg(long)]
+        max_content: Option<usize>,
+
         /// Output format (json, jsonl, csv, table, jq)
         #[arg(long, default_value = "json")]
         format: OutputFormat,
@@ -473,6 +477,7 @@ async fn main() -> Result<()> {
             tls_backend,
             no_cache,
             cache_ttl,
+            max_content,
             format,
         } => {
             let resolved = SchemaResolver::new("schemas").resolve(&schema)?;
@@ -502,6 +507,7 @@ async fn main() -> Result<()> {
                 skip_unchanged,
                 no_cache,
                 cache_ttl,
+                max_content,
                 format,
             };
 
@@ -880,6 +886,7 @@ struct ScrapeOpts<'a> {
     skip_unchanged: bool,
     no_cache: bool,
     cache_ttl: u64,
+    max_content: Option<usize>,
     format: OutputFormat,
 }
 
@@ -918,6 +925,7 @@ async fn cmd_scrape<F: Fetcher>(fetcher: F, opts: ScrapeOpts<'_>) -> Result<()> 
         let service =
             ScrapeService::with_store(fetcher, cleaner, extractor, repo, opts.model.to_string())
                 .with_skip_unchanged(opts.skip_unchanged)
+                .with_max_content_chars(opts.max_content)
                 .with_caches(content_cache, extraction_cache);
         service
             .scrape(opts.url, &opts.schema_value, opts.schema_name)
@@ -930,6 +938,7 @@ async fn cmd_scrape<F: Fetcher>(fetcher: F, opts: ScrapeOpts<'_>) -> Result<()> 
             NullStore,
             opts.model.to_string(),
         )
+        .with_max_content_chars(opts.max_content)
         .with_caches(content_cache, extraction_cache);
         service
             .scrape(opts.url, &opts.schema_value, opts.schema_name)

@@ -6,5 +6,6 @@
   "job_listing": "1.0.0",
   "recipe": "1.0.0",
   "event": "1.0.0",
-  "dataset": "1.0.0"
+  "dataset": "1.0.0",
+  "public_tenders": "1.0.0"
 }
