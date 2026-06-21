@@ -383,7 +383,7 @@ enum CrawlCommands {
         schema: String,
 
         /// Maximum depth for recursion
-        #[arg(short, long, default_value_t = 1)]
+        #[arg(short = 'd', long, default_value_t = 1)]
         max_depth: u32,
 
         /// LLM model to use
@@ -1091,4 +1091,17 @@ async fn cmd_history(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::CommandFactory;
+
+    /// Validates the whole clap command tree (unique short flags, etc.).
+    /// Guards against regressions like two args deriving the same short flag.
+    #[test]
+    fn cli_definition_is_valid() {
+        Cli::command().debug_assert();
+    }
 }
