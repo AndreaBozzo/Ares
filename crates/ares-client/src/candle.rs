@@ -63,12 +63,6 @@ pub struct LocalModelStore {
     root: PathBuf,
 }
 
-impl Default for LocalModelStore {
-    fn default() -> Self {
-        Self::from_env().expect("a supported platform cache directory")
-    }
-}
-
 impl LocalModelStore {
     pub fn from_env() -> Result<Self, AppError> {
         let root = match std::env::var_os("ARES_MODEL_DIR") {
@@ -217,13 +211,26 @@ static LOADED_MODELS: OnceLock<Mutex<HashMap<String, SharedModel>>> = OnceLock::
 
 fn shared_model(store: &LocalModelStore, alias: &str) -> Result<SharedModel, AppError> {
     let models = LOADED_MODELS.get_or_init(|| Mutex::new(HashMap::new()));
-    let mut models = models
+    let models = models
         .lock()
         .map_err(|_| local_error("Local model cache lock was poisoned".into(), true))?;
     if let Some(model) = models.get(alias) {
         return Ok(model.clone());
     }
-    let model = Arc::new(Mutex::new(LoadedModel::load(store, alias)?));
+
+    drop(models);
+
+    let loaded = LoadedModel::load(store, alias)?;
+    let model = Arc::new(Mutex::new(loaded));
+
+    let mut models = LOADED_MODELS
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .map_err(|_| local_error("Local model cache lock was poisoned".into(), true))?;
+    if let Some(existing) = models.get(alias) {
+        return Ok(existing.clone());
+    }
+
     models.insert(alias.to_string(), model.clone());
     Ok(model)
 }
