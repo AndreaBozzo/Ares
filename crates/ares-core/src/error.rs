@@ -31,6 +31,10 @@ pub enum AppError {
     #[error("Schema error: {0}")]
     SchemaError(String),
 
+    /// A client-supplied input was invalid (bad parameter or unsupported option).
+    #[error("Invalid input: {0}")]
+    InvalidInput(String),
+
     /// A specific schema version was not found.
     #[error("Schema not found: {name}@{version}")]
     SchemaNotFound { name: String, version: String },

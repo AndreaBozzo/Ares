@@ -19,6 +19,8 @@ use ares_core::traits::{Extractor, ExtractorFactory};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
+use crate::util::truncate_for_error;
+
 const DEFAULT_BASE_URL: &str = "https://api.anthropic.com/v1";
 const ANTHROPIC_VERSION: &str = "2023-06-01";
 const DEFAULT_LLM_TIMEOUT: Duration = Duration::from_secs(120);
@@ -189,7 +191,8 @@ struct ApiErrorDetail {
 fn parse_extraction(body: &str) -> Result<serde_json::Value, AppError> {
     let response: MessagesResponse = serde_json::from_str(body).map_err(|e| {
         AppError::HttpError(format!(
-            "Failed to parse Anthropic response: {e}. Raw: {body}"
+            "Failed to parse Anthropic response: {e}. Raw: {}",
+            truncate_for_error(body)
         ))
     })?;
 
@@ -199,7 +202,10 @@ fn parse_extraction(body: &str) -> Result<serde_json::Value, AppError> {
         .find(|b| b.block_type == "tool_use")
         .and_then(|b| b.input)
         .ok_or_else(|| AppError::LlmError {
-            message: format!("No tool_use block in Anthropic response. Raw: {body}"),
+            message: format!(
+                "No tool_use block in Anthropic response. Raw: {}",
+                truncate_for_error(body)
+            ),
             status_code: 200,
             retryable: false,
         })
@@ -239,7 +245,7 @@ impl Extractor for AnthropicExtractor {
 
             let message = serde_json::from_str::<ApiError>(&body)
                 .map(|e| e.error.message)
-                .unwrap_or_else(|_| format!("HTTP {status_code}: {body}"));
+                .unwrap_or_else(|_| format!("HTTP {status_code}: {}", truncate_for_error(&body)));
 
             // Anthropic uses 429 (rate limit), 500 (api_error), 529 (overloaded).
             let retryable = status_code == 429 || status_code >= 500;

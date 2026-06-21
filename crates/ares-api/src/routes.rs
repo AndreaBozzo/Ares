@@ -93,7 +93,11 @@ pub async fn scrape(
         .provider
         .clone()
         .unwrap_or_else(|| std::env::var("ARES_PROVIDER").unwrap_or_else(|_| "openai".to_string()));
-    let provider = Provider::parse(&provider_name)?;
+    let provider = Provider::parse(&provider_name).map_err(|_| {
+        ares_core::AppError::InvalidInput(format!(
+            "Invalid provider '{provider_name}': expected 'openai' or 'anthropic'"
+        ))
+    })?;
 
     let model = body.model.clone().unwrap_or_else(|| {
         std::env::var("ARES_MODEL").unwrap_or_else(|_| "gpt-4o-mini".to_string())
@@ -111,7 +115,13 @@ pub async fn scrape(
     ares_core::validate_schema(&body.schema)?;
 
     let cleaner = HtmdCleaner::new();
-    let extractor = ProviderExtractor::build(provider, &api_key, &model, &base_url, None, None)?;
+    // A missing `anthropic` build feature surfaces as ConfigError from `build`;
+    // that's a client asking for an unsupported provider, so treat it as 400.
+    let extractor = ProviderExtractor::build(provider, &api_key, &model, &base_url, None, None)
+        .map_err(|e| match e {
+            ares_core::AppError::ConfigError(msg) => ares_core::AppError::InvalidInput(msg),
+            other => other,
+        })?;
 
     // Build fetcher — browser or reqwest, with optional proxy + UA + stealth
     let result = if state.browser {
@@ -660,7 +670,7 @@ pub async fn start_crawl(
         Some(ref domains) if !domains.is_empty() => domains.clone(),
         _ => {
             let parsed_url = url::Url::parse(&body.url).map_err(|e| {
-                ApiError(ares_core::AppError::SchemaValidationError(format!(
+                ApiError(ares_core::AppError::InvalidInput(format!(
                     "Invalid crawl seed URL '{}': {e}",
                     body.url
                 )))

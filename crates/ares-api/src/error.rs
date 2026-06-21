@@ -20,6 +20,8 @@ impl IntoResponse for ApiError {
             AppError::SchemaValidationError(_) | AppError::SchemaError(_) => {
                 (StatusCode::BAD_REQUEST, "validation_error")
             }
+            // A bad/unsupported request parameter (e.g. an unknown `provider`).
+            AppError::InvalidInput(_) => (StatusCode::BAD_REQUEST, "invalid_input"),
             // The request was well-formed, but the extraction the model produced
             // did not conform to the schema — surface as Unprocessable Entity.
             AppError::ExtractionValidationError(_) => (

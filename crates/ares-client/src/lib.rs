@@ -7,6 +7,7 @@ pub mod llm;
 pub mod provider;
 pub mod robots;
 pub mod user_agent;
+pub(crate) mod util;
 
 #[cfg(feature = "anthropic")]
 pub mod anthropic;

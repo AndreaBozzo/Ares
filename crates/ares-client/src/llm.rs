@@ -5,6 +5,8 @@ use ares_core::traits::{Extractor, ExtractorFactory};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
+use crate::util::truncate_for_error;
+
 const DEFAULT_BASE_URL: &str = "https://api.openai.com/v1";
 const DEFAULT_LLM_TIMEOUT: Duration = Duration::from_secs(120);
 const DEFAULT_SYSTEM_PROMPT: &str = "You are a data extraction assistant. Extract the requested fields from the provided web content. Respond ONLY with valid JSON matching the requested schema. Do not include explanations.";
@@ -178,7 +180,7 @@ impl Extractor for OpenAiExtractor {
 
             let message = serde_json::from_str::<ApiError>(&body)
                 .map(|e| e.error.message)
-                .unwrap_or_else(|_| format!("HTTP {status_code}: {body}"));
+                .unwrap_or_else(|_| format!("HTTP {status_code}: {}", truncate_for_error(&body)));
 
             let retryable = status_code == 429 || status_code >= 500;
 
@@ -210,7 +212,8 @@ impl Extractor for OpenAiExtractor {
 
         serde_json::from_str(content_str).map_err(|e| {
             AppError::SchemaValidationError(format!(
-                "LLM returned invalid JSON: {e}. Raw: {content_str}"
+                "LLM returned invalid JSON: {e}. Raw: {}",
+                truncate_for_error(content_str)
             ))
         })
     }
