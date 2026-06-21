@@ -166,8 +166,9 @@ One-shot extraction. Fetches the URL, cleans HTML to Markdown, sends it to the L
 |---|---|---|
 | `-u, --url` | | Target URL |
 | `-s, --schema` | | Schema path or `name@version` |
-| `-m, --model` | `ARES_MODEL` | LLM model (e.g., `gpt-4o-mini`) |
-| `-b, --base-url` | `ARES_BASE_URL` | API base URL (default: OpenAI) |
+| `-m, --model` | `ARES_MODEL` | LLM model (e.g., `gpt-4o-mini`, `claude-haiku-4-5`) |
+| `--provider` | `ARES_PROVIDER` | `openai` (default) or `anthropic` (requires the `anthropic` feature) |
+| `-b, --base-url` | `ARES_BASE_URL` | API base URL (defaults to the selected provider's endpoint) |
 | `-a, --api-key` | `ARES_API_KEY` | API key |
 | `--save` | | Persist result to database |
 | `--schema-name` | | Override schema name for storage |
@@ -205,6 +206,7 @@ Start a background worker that polls the job queue, processes scrape jobs throug
 | `--worker-id` | | Custom worker ID (auto-generated if omitted) |
 | `--poll-interval` | | Seconds between job queue polls (default: 5) |
 | `-a, --api-key` | `ARES_API_KEY` | API key |
+| `--provider` | `ARES_PROVIDER` | `openai` (default) or `anthropic` (requires the `anthropic` feature) |
 | `--browser` | | Use headless browser for JS-rendered pages (requires `browser` feature) |
 | `--fetch-timeout` | | HTTP fetch timeout in seconds (default: 30) |
 | `--llm-timeout` | | LLM API timeout in seconds (default: 120) |
@@ -321,7 +323,8 @@ Reference by path (`schemas/blog/1.0.0.json`) or by name (`blog@1.0.0`, `blog@la
 |---|---|---|---|
 | `ARES_API_KEY` | Yes | | LLM API key |
 | `ARES_MODEL` | Yes | | LLM model name |
-| `ARES_BASE_URL` | No | `https://api.openai.com/v1` | OpenAI-compatible endpoint |
+| `ARES_PROVIDER` | No | `openai` | LLM provider: `openai` (OpenAI-compatible) or `anthropic` (Claude) |
+| `ARES_BASE_URL` | No | provider default | API base URL (defaults to the provider's endpoint) |
 | `DATABASE_URL` | For persistence | | PostgreSQL connection string |
 | `DATABASE_MAX_CONNECTIONS` | No | `5` | PostgreSQL connection pool size |
 | `ARES_ADMIN_TOKEN` | No | | Bearer token for REST API auth |
@@ -340,6 +343,32 @@ Reference by path (`schemas/blog/1.0.0.json`) or by name (`blog@1.0.0`, `blog@la
 export ARES_BASE_URL="https://generativelanguage.googleapis.com/v1beta/openai"
 export ARES_MODEL="gemini-2.5-flash"
 ```
+
+### Anthropic (Claude)
+
+Anthropic's API is not OpenAI-compatible (it uses the native Messages API), so it
+lives behind the `anthropic` build feature and the `anthropic` provider. Build with
+the feature, then select the provider:
+
+```bash
+export ARES_PROVIDER="anthropic"
+export ARES_API_KEY="sk-ant-..."
+export ARES_MODEL="claude-haiku-4-5"   # or claude-sonnet-4-6 for complex schemas
+
+# ARES_BASE_URL defaults to https://api.anthropic.com/v1 for the anthropic provider
+cargo run --features anthropic -- scrape -u https://example.com -s blog@latest
+```
+
+| Model | Best for |
+|---|---|
+| `claude-haiku-4-5` | Fast, cheap, high-volume extraction of simple schemas |
+| `claude-sonnet-4-6` | Complex schemas and nuanced content (higher quality, higher cost) |
+
+Extraction uses forced **tool use** under the hood: the JSON Schema is passed as the
+tool's `input_schema` and Claude is required to call it, so the result is a structured
+object that is then validated against the schema like any other provider. When running
+a **worker** with `--provider anthropic`, make sure jobs target an Anthropic base URL
+(the per-job default is the OpenAI endpoint).
 
 ## Docker
 

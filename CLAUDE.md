@@ -70,5 +70,5 @@ JSON Schema files live in `schemas/<name>/<version>.json` with a `registry.json`
 ## Conventions
 
 - Errors: single `AppError` enum in `ares-core/src/error.rs`, surfaced over HTTP by `ares-api/src/error.rs` mapping variants → status codes. Add new variants there in both places.
-- The `Extractor` trait is the seam for new inference backends (the `OpenAiExtractor` already supports any OpenAI-compatible `base_url`, including local servers and Gemini's compat endpoint). New backends implement `Extractor` + `ExtractorFactory`; nothing else in the pipeline needs to change.
+- The `Extractor` trait is the seam for new inference backends (the `OpenAiExtractor` already supports any OpenAI-compatible `base_url`, including local servers and Gemini's compat endpoint). New backends implement `Extractor` + `ExtractorFactory`; nothing else in the pipeline needs to change. `AnthropicExtractor` (native Messages API via forced tool use) is gated behind the `anthropic` feature in `ares-client`. Runtime provider selection goes through `ProviderExtractor`/`ProviderExtractorFactory` dispatch enums (ares-client/src/provider.rs), chosen via `--provider`/`ARES_PROVIDER` in the CLI and the `/v1/scrape` request body in the API.
 - All trait deps are `Clone + Send + Sync` so services can be cheaply reconstructed per job.
