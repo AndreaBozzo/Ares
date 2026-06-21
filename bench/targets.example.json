@@ -1,7 +1,10 @@
 {
   "fixtures": [
     { "file": "bench/fixtures/blog.html", "schema": "blog@latest" },
-    { "file": "bench/fixtures/github_repo.html", "schema": "github_repo@latest" }
+    { "file": "bench/fixtures/github_repo.html", "schema": "github_repo@latest" },
+    { "file": "bench/fixtures/product.html", "schema": "product@latest" },
+    { "file": "bench/fixtures/news_article.html", "schema": "news_article@latest" },
+    { "file": "bench/fixtures/recipe.html", "schema": "recipe@latest" }
   ],
   "targets": [
     {
