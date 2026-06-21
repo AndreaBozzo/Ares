@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Rethinking Backpressure in Async Rust — Foundry Blog</title>
+  <link rel="canonical" href="https://blog.example.com/posts/rethinking-backpressure-async-rust">
+  <meta property="og:image" content="https://blog.example.com/img/backpressure-hero.png">
+</head>
+<body>
+  <nav>
+    <a href="/">Home</a>
+    <a href="/archive">Archive</a>
+    <a href="/about">About</a>
+  </nav>
+
+  <main>
+    <article>
+      <header>
+        <h1>Rethinking Backpressure in Async Rust</h1>
+        <p class="byline">
+          By <span class="author" rel="author">Mara Vinçek</span>
+          on <time datetime="2026-05-14">May 14, 2026</time>
+        </p>
+        <figure>
+          <img src="https://blog.example.com/img/backpressure-hero.png" alt="Channels filling up">
+        </figure>
+      </header>
+
+      <p class="summary">
+        Backpressure is the quiet contract that keeps async systems from melting down
+        under load. This post walks through how bounded channels, <code>poll_ready</code>,
+        and cooperative yielding combine to propagate slowness instead of dropping work —
+        and where the common Tokio patterns leak that contract.
+      </p>
+
+      <section>
+        <p>
+          When a producer outruns a consumer, something has to give. Unbounded queues
+          trade memory for the illusion of progress; bounded queues trade latency for
+          stability. We argue the second trade is almost always the right one for
+          long-running services.
+        </p>
+        <p>
+          The mechanics matter. A <code>tokio::sync::mpsc</code> channel with a capacity
+          of one behaves very differently from one with a capacity of 1024, and the
+          difference shows up not in throughput but in tail latency under saturation.
+        </p>
+      </section>
+
+      <footer>
+        <ul class="tags">
+          <li><a href="/tag/rust">rust</a></li>
+          <li><a href="/tag/async">async</a></li>
+          <li><a href="/tag/tokio">tokio</a></li>
+          <li><a href="/tag/backpressure">backpressure</a></li>
+        </ul>
+      </footer>
+    </article>
+  </main>
+
+  <footer class="site-footer">
+    <p>© 2026 Foundry Blog. All rights reserved.</p>
+  </footer>
+</body>
+</html>

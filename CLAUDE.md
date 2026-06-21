@@ -29,6 +29,9 @@ cargo clippy --all-targets --all-features -- -D warnings
 make docker-up                   # docker compose up -d
 make migrate                     # applies crates/ares-db/migrations/*.sql, tracked in schema_migrations
 make all                         # fmt + clippy + test
+
+# Local-vs-hosted extraction benchmark (validity / latency / cost proxy)
+cargo run --example bench --features anthropic -- bench/targets.json   # see docs/local-inference.md
 ```
 
 **CI gotchas** (`.github/workflows/ci.yml`):

@@ -370,6 +370,22 @@ object that is then validated against the schema like any other provider. When r
 a **worker** with `--provider anthropic`, make sure jobs target an Anthropic base URL
 (the per-job default is the OpenAI endpoint).
 
+### Local inference
+
+Because the OpenAI provider works with any OpenAI-compatible endpoint, you can run
+extraction against a **local** model (llama.cpp, Ollama, LM Studio) with no rebuild —
+just point `ARES_BASE_URL` at the local server. See
+[docs/local-inference.md](docs/local-inference.md) for the full recipe, recommended
+laptop-sized models, and the [`bench`](bench) harness that compares local vs hosted on
+output validity, latency, and a cost proxy.
+
+```bash
+export ARES_BASE_URL=http://localhost:8080/v1   # e.g. llama-server
+export ARES_MODEL=qwen2.5-3b-instruct
+export ARES_API_KEY=sk-local                    # local servers usually ignore it
+cargo run -- scrape -u https://example.com -s blog@latest
+```
+
 ## Docker
 
 ```bash
