@@ -113,7 +113,7 @@ dependencies = [
 
 [[package]]
 name = "ares-api"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "ares-client",
@@ -144,7 +144,7 @@ dependencies = [
 
 [[package]]
 name = "ares-cli"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "ares-client",
@@ -164,7 +164,7 @@ dependencies = [
 
 [[package]]
 name = "ares-client"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "ares-core",
@@ -191,7 +191,7 @@ dependencies = [
 
 [[package]]
 name = "ares-core"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "chrono",
  "jsonschema",
@@ -210,7 +210,7 @@ dependencies = [
 
 [[package]]
 name = "ares-db"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "ares-core",
  "chrono",

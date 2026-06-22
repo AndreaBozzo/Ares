@@ -5,6 +5,52 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-06-22
+
+
+### Added
+
+- **core**: Validate extracted output against schema
+- **client**: Add native Anthropic (Claude) provider
+- **bench**: Local-HTTP inference recipe + extraction benchmark (Issue B)
+- **client**: Preserve <head> metadata in the cleaner to ground extraction
+- **schema**: Add JSON schema for BlogPage with required properties
+- **core**: Heuristic groundedness check for extracted values
+- Content cap (--max-content) + public_tenders schema
+- **schema**: Add job_board + tender_list listing schemas; describe blog fields
+
+
+### Changed
+
+- Apply rustfmt to validation changes
+
+
+### Dependencies
+
+- **deps**: Bump rand from 0.8.5 to 0.8.6
+
+
+### Documentation
+
+- Fix first-run DATABASE_URL and docker compose description
+- Add CLAUDE.md for Claude Code
+- Document Anthropic provider configuration
+
+
+### Fixed
+
+- Address Copilot review (4xx for bad input, bound error payloads)
+- **cli**: Resolve duplicate -m short flag in `crawl start`; add clap assert test
+
+
+### Miscellaneous
+
+- Update windows-sys dependency to version 0.61.2
+
+
+### Testing
+
+- **bench**: Add product/news_article/recipe fixtures for broader coverage
 ## [0.3.0] - 2026-04-29
 
 
