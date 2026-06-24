@@ -170,31 +170,37 @@ where
         let content_hash = compute_hash(&markdown);
         let schema_hash = compute_hash(&schema.to_string());
 
-        // 4. Extract (with optional extraction cache)
-        let extracted = if let Some(cache) = &self.extraction_cache {
+        // 4. Extract (with optional extraction cache). Latency and token usage
+        // are captured only on a real LLM call; cache hits report neither.
+        let (extracted, latency_ms, usage) = if let Some(cache) = &self.extraction_cache {
             if let Some(cached) = cache
                 .get(&content_hash, schema_name, &schema_hash, &self.model_name)
                 .await
             {
                 tracing::info!("Using cached extraction for model {}", self.model_name);
-                cached
+                (cached, None, None)
             } else {
                 tracing::info!("Extracting with model {} ...", self.model_name);
-                let data = self.extractor.extract(&markdown, schema).await?;
+                let started = std::time::Instant::now();
+                let outcome = self.extractor.extract(&markdown, schema).await?;
+                let latency_ms = started.elapsed().as_millis();
                 cache
                     .insert(
                         &content_hash,
                         schema_name,
                         &schema_hash,
                         &self.model_name,
-                        data.clone(),
+                        outcome.value.clone(),
                     )
                     .await;
-                data
+                (outcome.value, Some(latency_ms), outcome.usage)
             }
         } else {
             tracing::info!("Extracting with model {} ...", self.model_name);
-            self.extractor.extract(&markdown, schema).await?
+            let started = std::time::Instant::now();
+            let outcome = self.extractor.extract(&markdown, schema).await?;
+            let latency_ms = started.elapsed().as_millis();
+            (outcome.value, Some(latency_ms), outcome.usage)
         };
 
         // 4b. Validate extracted output against the schema before hashing/saving.
@@ -220,6 +226,8 @@ where
         tracing::info!(
             content_hash = %&content_hash[..8],
             data_hash = %&data_hash[..8],
+            latency_ms = ?latency_ms,
+            usage = ?usage,
             "Extraction complete"
         );
 
@@ -269,6 +277,8 @@ where
             data_hash,
             changed,
             extraction_id,
+            latency_ms,
+            usage,
             raw_html: Some(html),
         })
     }

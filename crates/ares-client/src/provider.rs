@@ -10,6 +10,7 @@
 use std::time::Duration;
 
 use ares_core::error::AppError;
+use ares_core::models::ExtractionOutcome;
 use ares_core::traits::{Extractor, ExtractorFactory};
 
 #[cfg(not(feature = "local-llm"))]
@@ -135,7 +136,7 @@ impl Extractor for ProviderExtractor {
         &self,
         content: &str,
         schema: &serde_json::Value,
-    ) -> Result<serde_json::Value, AppError> {
+    ) -> Result<ExtractionOutcome, AppError> {
         match self {
             ProviderExtractor::OpenAi(e) => e.extract(content, schema).await,
             #[cfg(feature = "anthropic")]

@@ -165,7 +165,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let latency_ms = start.elapsed().as_millis();
 
             let row = match result {
-                Ok(value) => {
+                Ok(outcome) => {
+                    let value = outcome.value;
                     let output = value.to_string();
                     let (status, detail, ungrounded) =
                         match validate_extracted_output(&fx.schema, &value) {

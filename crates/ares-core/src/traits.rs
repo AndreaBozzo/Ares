@@ -3,7 +3,7 @@ use std::future::Future;
 use uuid::Uuid;
 
 use crate::error::AppError;
-use crate::models::{Extraction, NewExtraction};
+use crate::models::{Extraction, ExtractionOutcome, NewExtraction};
 
 /// Fetches raw HTML content from a URL.
 pub trait Fetcher: Send + Sync + Clone {
@@ -16,14 +16,14 @@ pub trait Cleaner: Send + Sync + Clone {
 }
 
 /// Extracts structured JSON data from text content using an LLM.
-// TODO(#4): Add CandleExtractor impl for local inference
 pub trait Extractor: Send + Sync + Clone {
-    /// Sends the content and JSON schema to the LLM and returns extracted JSON.
+    /// Sends the content and JSON schema to the LLM and returns the extracted
+    /// JSON together with any reported token usage ([`ExtractionOutcome`]).
     fn extract(
         &self,
         content: &str,
         schema: &serde_json::Value,
-    ) -> impl Future<Output = Result<serde_json::Value, AppError>> + Send;
+    ) -> impl Future<Output = Result<ExtractionOutcome, AppError>> + Send;
 }
 
 /// Factory for creating Extractor instances with specific model/base_url.

@@ -12,7 +12,7 @@ use uuid::Uuid;
 use crate::error::AppError;
 use crate::job::{CreateScrapeJobRequest, JobStatus, ScrapeJob};
 use crate::job_queue::JobQueue;
-use crate::models::{Extraction, NewExtraction};
+use crate::models::{Extraction, ExtractionOutcome, NewExtraction};
 use crate::traits::{
     Cleaner, ExtractionStore, Extractor, ExtractorFactory, Fetcher, LinkDiscoverer,
 };
@@ -132,13 +132,14 @@ impl Extractor for MockExtractor {
         &self,
         _content: &str,
         _schema: &serde_json::Value,
-    ) -> Result<serde_json::Value, AppError> {
+    ) -> Result<ExtractionOutcome, AppError> {
         let mut responses = self.responses.lock().unwrap();
-        if responses.is_empty() {
-            Ok(serde_json::json!({"default": true}))
+        let value = if responses.is_empty() {
+            serde_json::json!({"default": true})
         } else {
-            responses.remove(0)
-        }
+            responses.remove(0)?
+        };
+        Ok(ExtractionOutcome::new(value))
     }
 }
 

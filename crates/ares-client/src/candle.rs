@@ -19,6 +19,7 @@ use serde::{Deserialize, Serialize};
 use tokenizers::Tokenizer;
 
 use ares_core::error::AppError;
+use ares_core::models::ExtractionOutcome;
 use ares_core::schema::validate_extracted_output;
 use ares_core::traits::{Extractor, ExtractorFactory};
 
@@ -367,14 +368,16 @@ impl Extractor for CandleExtractor {
         &self,
         content: &str,
         schema: &serde_json::Value,
-    ) -> Result<serde_json::Value, AppError> {
-        match self.extract_once(content, schema, None) {
-            Ok(value) => Ok(value),
+    ) -> Result<ExtractionOutcome, AppError> {
+        // Native local inference has no billable-token notion → no usage.
+        let value = match self.extract_once(content, schema, None) {
+            Ok(value) => value,
             Err(first_error) => {
                 tracing::warn!(error = %first_error, "local extraction failed validation; retrying once");
-                self.extract_once(content, schema, Some(&first_error.to_string()))
+                self.extract_once(content, schema, Some(&first_error.to_string()))?
             }
-        }
+        };
+        Ok(ExtractionOutcome::new(value))
     }
 }
 
@@ -544,11 +547,11 @@ mod tests {
             let html = fs::read_to_string(root.join(fixture)).unwrap();
             let schema: serde_json::Value =
                 serde_json::from_slice(&fs::read(root.join(schema)).unwrap()).unwrap();
-            let value = extractor
+            let outcome = extractor
                 .extract(&cleaner.clean(&html).unwrap(), &schema)
                 .await
                 .unwrap();
-            validate_extracted_output(&schema, &value).unwrap();
+            validate_extracted_output(&schema, &outcome.value).unwrap();
         }
     }
 }
