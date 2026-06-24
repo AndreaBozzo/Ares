@@ -212,10 +212,14 @@ impl Extractor for OpenAiExtractor {
             .await
             .map_err(|e| AppError::HttpError(format!("Failed to parse LLM response: {e}")))?;
 
+        // Treat a present-but-all-zero usage block as "not reported" rather than
+        // surfacing a misleading Usage { 0, 0 } (some OpenAI-compatible servers
+        // include the object but omit the counts).
         let usage = chat_response
             .usage
             .as_ref()
-            .map(|u| Usage::new(u.prompt_tokens, u.completion_tokens));
+            .map(|u| Usage::new(u.prompt_tokens, u.completion_tokens))
+            .filter(|u| u.total_tokens() > 0);
 
         let content_str = chat_response
             .choices

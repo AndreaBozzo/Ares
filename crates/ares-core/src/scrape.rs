@@ -629,6 +629,11 @@ mod tests {
         assert_eq!(r2.extracted_data, extracted);
         // Same content means same content hash
         assert_eq!(r1.content_hash, r2.content_hash);
+
+        // Real extractor call records latency; the cached second run reports none.
+        assert!(r1.latency_ms.is_some());
+        assert!(r2.latency_ms.is_none(), "cache hit must not report latency");
+        assert!(r2.usage.is_none(), "cache hit must not report usage");
     }
 
     #[tokio::test]
@@ -664,6 +669,10 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(r2.extracted_data, extracted);
+
+        // Extraction cache hit on the second run → no latency recorded.
+        assert!(r1.latency_ms.is_some());
+        assert!(r2.latency_ms.is_none(), "cache hit must not report latency");
     }
 
     #[tokio::test]
@@ -695,5 +704,9 @@ mod tests {
             .unwrap();
         // Different extraction because no cache — fetcher returned different HTML
         assert_eq!(r2.extracted_data, serde_json::json!({"title": "World"}));
+
+        // Both runs hit the real extractor → both record latency.
+        assert!(r1.latency_ms.is_some());
+        assert!(r2.latency_ms.is_some());
     }
 }

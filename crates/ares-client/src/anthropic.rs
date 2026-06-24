@@ -209,10 +209,13 @@ fn parse_extraction(body: &str) -> Result<ExtractionOutcome, AppError> {
         ))
     })?;
 
+    // A present-but-all-zero usage block means "not reported" — don't surface a
+    // misleading Usage { 0, 0 }.
     let usage = response
         .usage
         .as_ref()
-        .map(|u| Usage::new(u.input_tokens, u.output_tokens));
+        .map(|u| Usage::new(u.input_tokens, u.output_tokens))
+        .filter(|u| u.total_tokens() > 0);
 
     let value = response
         .content
@@ -396,6 +399,23 @@ mod tests {
         let usage = outcome.usage.expect("usage present");
         assert_eq!(usage.prompt_tokens, 120);
         assert_eq!(usage.completion_tokens, 8);
+    }
+
+    #[test]
+    fn parse_extraction_treats_zero_usage_as_none() {
+        // A present-but-all-zero usage block must be reported as "unknown" (None),
+        // not Usage { 0, 0 }.
+        let body = serde_json::json!({
+            "content": [
+                { "type": "tool_use", "name": "extract", "input": { "title": "Hi" } }
+            ],
+            "usage": { "input_tokens": 0, "output_tokens": 0 }
+        })
+        .to_string();
+
+        let outcome = parse_extraction(&body).unwrap();
+        assert_eq!(outcome.value, serde_json::json!({ "title": "Hi" }));
+        assert!(outcome.usage.is_none());
     }
 
     #[test]
