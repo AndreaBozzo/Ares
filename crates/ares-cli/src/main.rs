@@ -1016,6 +1016,7 @@ async fn cmd_scrape<F: Fetcher>(fetcher: F, opts: ScrapeOpts<'_>) -> Result<()> 
         let service =
             ScrapeService::with_store(fetcher, cleaner, extractor, repo, opts.model.to_string())
                 .with_skip_unchanged(opts.skip_unchanged)
+                .with_provider(opts.provider.name())
                 .with_max_content_chars(opts.max_content)
                 .with_caches(content_cache, extraction_cache);
         service
@@ -1029,6 +1030,7 @@ async fn cmd_scrape<F: Fetcher>(fetcher: F, opts: ScrapeOpts<'_>) -> Result<()> 
             NullStore,
             opts.model.to_string(),
         )
+        .with_provider(opts.provider.name())
         .with_max_content_chars(opts.max_content)
         .with_caches(content_cache, extraction_cache);
         service
@@ -1064,7 +1066,8 @@ async fn cmd_worker<F: Fetcher>(fetcher: F, opts: WorkerOpts<'_>) -> Result<()> 
 
     let config = WorkerConfig::default()
         .with_poll_interval(Duration::from_secs(opts.poll_interval))
-        .with_skip_unchanged(opts.skip_unchanged);
+        .with_skip_unchanged(opts.skip_unchanged)
+        .with_provider(opts.provider.name());
     let config = if let Some(id) = opts.worker_id {
         config.with_worker_id(id)
     } else {

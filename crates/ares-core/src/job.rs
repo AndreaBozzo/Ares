@@ -206,6 +206,8 @@ pub struct WorkerConfig {
     pub poll_interval: Duration,
     pub retry_config: RetryConfig,
     pub skip_unchanged: bool,
+    /// LLM provider name recorded in extraction run metadata (e.g. `openai`).
+    pub provider: String,
 }
 
 impl Default for WorkerConfig {
@@ -215,6 +217,7 @@ impl Default for WorkerConfig {
             poll_interval: Duration::from_secs(5),
             retry_config: RetryConfig::default(),
             skip_unchanged: false,
+            provider: "openai".to_string(),
         }
     }
 }
@@ -232,6 +235,11 @@ impl WorkerConfig {
 
     pub fn with_skip_unchanged(mut self, skip: bool) -> Self {
         self.skip_unchanged = skip;
+        self
+    }
+
+    pub fn with_provider(mut self, provider: impl Into<String>) -> Self {
+        self.provider = provider.into();
         self
     }
 }

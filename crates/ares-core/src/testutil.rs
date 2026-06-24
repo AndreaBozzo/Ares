@@ -642,6 +642,11 @@ pub fn make_test_extraction(data_hash: &str) -> Extraction {
         content_hash: "abc123".to_string(),
         data_hash: data_hash.to_string(),
         model: "test-model".to_string(),
+        provider: "openai".to_string(),
+        schema_version: None,
+        latency_ms: None,
+        prompt_tokens: None,
+        completion_tokens: None,
         created_at: Utc::now(),
     }
 }

@@ -255,6 +255,7 @@ where
             job.model.clone(),
         )
         .with_skip_unchanged(self.config.skip_unchanged)
+        .with_provider(self.config.provider.clone())
         .with_caches(self.content_cache.clone(), self.extraction_cache.clone());
 
         // Wrap in circuit breaker
@@ -454,6 +455,7 @@ mod tests {
             poll_interval: Duration::from_millis(10),
             retry_config: RetryConfig::default(),
             skip_unchanged: false,
+            provider: "openai".to_string(),
         }
     }
 

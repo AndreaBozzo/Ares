@@ -205,16 +205,19 @@ async fn run_scrape<F: Fetcher>(
     model: &str,
     save: bool,
 ) -> Result<ScrapeResult, ares_core::AppError> {
+    let provider = extractor.provider_name();
     if save {
         let repo = state.db.extraction_repo();
         let service =
-            ScrapeService::with_store(fetcher, cleaner, extractor, repo, model.to_string());
+            ScrapeService::with_store(fetcher, cleaner, extractor, repo, model.to_string())
+                .with_provider(provider);
         service
             .scrape(&body.url, &body.schema, &body.schema_name)
             .await
     } else {
         let service =
-            ScrapeService::with_store(fetcher, cleaner, extractor, NullStore, model.to_string());
+            ScrapeService::with_store(fetcher, cleaner, extractor, NullStore, model.to_string())
+                .with_provider(provider);
         service
             .scrape(&body.url, &body.schema, &body.schema_name)
             .await
