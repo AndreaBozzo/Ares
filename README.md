@@ -5,7 +5,7 @@
 <h1 align="center">Ares</h1>
 
 <p align="center">
-  Web scraper with LLM-powered structured data extraction.
+  Web scraper with LLM-powered structured data extraction — cloud or fully local.
 </p>
 
 <p align="center">
@@ -16,13 +16,23 @@
 
 ---
 
-Ares fetches web pages, converts HTML to Markdown, and uses LLM APIs to extract structured data defined by JSON Schemas. It exposes both a CLI and a REST API, supports persistent job queues with retries, circuit breaking, rate-limiting, change detection, and graceful shutdown.
+Ares fetches web pages, converts HTML to Markdown, and uses an LLM to extract structured data defined by JSON Schemas. It ships a CLI and a REST API, supports persistent job queues with retries, circuit breaking, rate-limiting, change detection, and recursive crawling.
+
+**Works with any LLM backend** — OpenAI, Gemini, Anthropic (Claude), Ollama, llama.cpp, LM Studio, or a fully embedded Qwen model that runs inside the Ares process with no network connection required.
 
 > *Named after the Greek god of war and courage.*
 
 Conceptual sibling of [Ceres](https://github.com/AndreaBozzo/Ceres) — same philosophy, different temperament. Where Ceres is the nurturing goddess of harvest, Ares charges headfirst into the web and *takes* what it needs.
 
 > 💡 **Claude Code user?** Install the [Ares Claude Skill](https://github.com/AndreaBozzo/Ares-Claude-Skill) to give Claude deep knowledge of Ares — architecture, traits, CLI, REST API, schemas, and extension patterns.
+
+## What's new in v0.4.0
+
+- 🖥️ **Native local inference** — run extraction entirely offline with the embedded Qwen2.5-3B model (no API key, no server, no network after first download) via the `local-llm` feature
+- 🦙 **Ollama & llama.cpp support** — point `ARES_BASE_URL` at any OpenAI-compatible local server (Ollama, llama.cpp, LM Studio) and extract with zero code changes
+- 🤖 **Anthropic (Claude) provider** — native Messages API with forced tool use for structured extraction, behind the `anthropic` feature flag
+- ✅ **Output validation** — every extraction is validated against your JSON Schema before it is saved; mismatches are surfaced as errors rather than silently stored
+- 📊 **Run metadata** — provider, schema version, latency, and token counts are now recorded for every extraction
 
 
 ## Architecture
@@ -119,7 +129,10 @@ All external dependencies are behind traits (`Fetcher`, `Cleaner`, `Extractor`, 
 
 - **Rust** 1.88+ (edition 2024)
 - **Docker** (for PostgreSQL and integration tests)
-- An **OpenAI-compatible API key** (OpenAI, Gemini, or any compatible endpoint)
+- **An LLM backend** — one of:
+  - An API key for OpenAI, Gemini, or Anthropic
+  - A local server such as [Ollama](https://ollama.com) or [llama.cpp](https://github.com/ggerganov/llama.cpp) (no key needed)
+  - *Nothing* — build with `--features local-llm` to embed Qwen2.5-3B directly in Ares
 - **Chromium / Chrome** (only when using `--browser` for JS-rendered pages)
 
 ## Quick Start
@@ -139,6 +152,16 @@ cp .env.example .env
 
 # One-shot scrape (stdout only)
 cargo run -- scrape -u https://example.com -s schemas/blog/1.0.0.json
+
+# Scrape with Ollama (no API key required)
+ollama pull qwen2.5:3b && ollama serve &
+ARES_BASE_URL=http://localhost:11434/v1 ARES_MODEL=qwen2.5:3b ARES_API_KEY=sk-local \
+  cargo run -- scrape -u https://example.com -s blog@latest
+
+# Scrape fully offline — embedded Qwen2.5-3B, no network after download
+cargo run --features local-llm -- model pull qwen2.5-3b-instruct-q4
+cargo run --features local-llm -- scrape --provider local --model qwen2.5-3b-instruct-q4 \
+  -u https://example.com -s blog@latest
 
 # Scrape a JS-rendered page with headless browser
 cargo run --features browser -- scrape -u https://spa-example.com -s blog@latest --browser
@@ -321,13 +344,13 @@ Reference by path (`schemas/blog/1.0.0.json`) or by name (`blog@1.0.0`, `blog@la
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `ARES_API_KEY` | Yes | | LLM API key |
+| `ARES_API_KEY` | Yes (cloud) | | LLM API key (not needed with `--provider local`) |
 | `ARES_MODEL` | Yes | | LLM model name |
-| `ARES_PROVIDER` | No | `openai` | LLM provider: `openai` (OpenAI-compatible) or `anthropic` (Claude) |
-| `ARES_BASE_URL` | No | provider default | API base URL (defaults to the provider's endpoint) |
+| `ARES_PROVIDER` | No | `openai` | LLM provider: `openai`, `anthropic`, or `local` |
+| `ARES_BASE_URL` | No | provider default | API base URL — set this to point at any local server |
 | `DATABASE_URL` | For persistence | | PostgreSQL connection string |
 | `DATABASE_MAX_CONNECTIONS` | No | `5` | PostgreSQL connection pool size |
-| `ARES_ADMIN_TOKEN` | No | | Bearer token for REST API auth |
+| `ARES_ADMIN_TOKEN` | No | | ****** for REST API auth |
 | `ARES_SERVER_PORT` | No | `3000` | HTTP server listen port |
 | `ARES_SCHEMAS_DIR` | No | `schemas` | Path to schemas directory |
 | `ARES_CORS_ORIGIN` | No | | Allowed CORS origins (comma-separated, or `*`) |
@@ -335,9 +358,65 @@ Reference by path (`schemas/blog/1.0.0.json`) or by name (`blog@1.0.0`, `blog@la
 | `ARES_RATE_LIMIT_RPS` | No | `1` | Request replenish rate (per second) |
 | `ARES_BODY_SIZE_LIMIT` | No | `2097152` | Max request body size in bytes (2 MB) |
 | `ARES_CACHE_TTL` | No | `3600` | In-memory cache TTL in seconds |
+| `ARES_MODEL_DIR` | No | platform cache | Directory where native models are stored |
 | `CHROME_BIN` | No | Auto-detected | Override path to Chrome/Chromium binary |
 
-**Gemini** works via the OpenAI-compatible endpoint:
+### Local inference — Ollama or llama.cpp (no API key needed)
+
+Point `ARES_BASE_URL` at any OpenAI-compatible server and you are done — no rebuild, no feature flags required. Ares sends `response_format: json_schema` with your schema, and every extraction is validated against it regardless of backend.
+
+**Ollama:**
+
+```bash
+ollama pull qwen2.5:3b
+ollama serve   # exposes http://localhost:11434/v1
+
+export ARES_PROVIDER=openai
+export ARES_BASE_URL=http://localhost:11434/v1
+export ARES_MODEL=qwen2.5:3b           # must match the exact Ollama tag
+export ARES_API_KEY=sk-local           # ignored by Ollama, but required by Ares
+cargo run -- scrape -u https://example.com -s blog@latest
+```
+
+> **Note:** Ollama's OpenAI-compatibility layer supports `json_object` mode but not full `json_schema`. Ares validates the output anyway, so malformed extractions are caught and surfaced as errors.
+
+**llama.cpp (`llama-server`):**
+
+```bash
+llama-server -hf Qwen/Qwen2.5-3B-Instruct-GGUF:Q4_K_M \
+  --port 8080 --alias qwen2.5-3b-instruct --ctx-size 8192 --temp 0
+
+export ARES_BASE_URL=http://localhost:8080/v1
+export ARES_MODEL=qwen2.5-3b-instruct
+export ARES_API_KEY=sk-local
+cargo run -- scrape -u https://example.com -s blog@latest
+```
+
+See [docs/local-inference.md](docs/local-inference.md) for more server options (LM Studio, etc.) and the [`bench`](bench) harness that compares local vs hosted on output validity, latency, and cost.
+
+### Native local inference — embedded Qwen (fully offline)
+
+Build Ares with the `local-llm` feature to embed a **Qwen2.5-3B-Instruct Q4** model that runs directly inside the Ares process using [Candle](https://github.com/huggingface/candle). No server, no API key, no network connection needed after the one-time model download (~2 GB).
+
+```bash
+# Download the model once
+cargo run --features local-llm -- model pull qwen2.5-3b-instruct-q4
+
+# Scrape with the embedded model
+cargo run --features local-llm -- scrape \
+  --provider local --model qwen2.5-3b-instruct-q4 \
+  --url https://example.com --schema blog@latest
+
+# Manage downloaded models
+cargo run --features local-llm -- model list
+cargo run --features local-llm -- model remove qwen2.5-3b-instruct-q4
+```
+
+The model is stored in the platform cache directory (or `ARES_MODEL_DIR` when set). Native generation is CPU-based and serialized per process — treat it as a one-at-a-time extractor rather than a parallel worker.
+
+### Gemini
+
+Gemini works via its OpenAI-compatible endpoint — no special feature flag needed:
 
 ```bash
 export ARES_BASE_URL="https://generativelanguage.googleapis.com/v1beta/openai"
@@ -369,23 +448,6 @@ tool's `input_schema` and Claude is required to call it, so the result is a stru
 object that is then validated against the schema like any other provider. When running
 a **worker** with `--provider anthropic`, make sure jobs target an Anthropic base URL
 (the per-job default is the OpenAI endpoint).
-
-### Local inference
-
-Because the OpenAI provider works with any OpenAI-compatible endpoint, you can run
-extraction against a **local** model (llama.cpp, Ollama, LM Studio) with no rebuild —
-just point `ARES_BASE_URL` at the local server. See
-[docs/local-inference.md](docs/local-inference.md) for the full recipe, recommended
-laptop-sized models, and the [`bench`](bench) harness that compares local vs hosted on
-output validity, latency, and a cost proxy.
-
-```bash
-export ARES_BASE_URL=http://localhost:8080/v1   # e.g. llama-server
-export ARES_MODEL=qwen2.5-3b-instruct
-export ARES_API_KEY=sk-local                    # local servers usually ignore it
-cargo run -- scrape -u https://example.com -s blog@latest
-```
-
 ## Docker
 
 ```bash
