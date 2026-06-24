@@ -103,7 +103,7 @@ pub struct Extraction {
 ///
 /// `Default` is provided so tests can set only the fields they care about
 /// (`..Default::default()`); the pipeline always sets every field explicitly.
-#[derive(Debug, Clone, Default, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct NewExtraction {
     pub url: String,
     pub schema_name: String,
@@ -117,6 +117,26 @@ pub struct NewExtraction {
     pub latency_ms: Option<i64>,
     pub prompt_tokens: Option<i32>,
     pub completion_tokens: Option<i32>,
+}
+
+impl Default for NewExtraction {
+    fn default() -> Self {
+        Self {
+            url: String::new(),
+            schema_name: String::new(),
+            extracted_data: serde_json::Value::Null,
+            raw_content_hash: String::new(),
+            data_hash: String::new(),
+            model: String::new(),
+            // Canonical default provider (matches the DB column default and
+            // `ScrapeService`), so `..Default::default()` never persists "".
+            provider: "openai".to_string(),
+            schema_version: None,
+            latency_ms: None,
+            prompt_tokens: None,
+            completion_tokens: None,
+        }
+    }
 }
 
 /// Result of a scrape pipeline execution.

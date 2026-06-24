@@ -242,12 +242,16 @@ where
         );
 
         // Run metadata recorded alongside the extraction. Schema version is the
-        // part after `@` in a `name@version` reference (None for bare names).
-        // Latency/usage are `None` on cache hits.
-        let schema_version = schema_name.rsplit_once('@').map(|(_, v)| v.to_string());
-        let latency_ms_i64 = latency_ms.map(|l| l as i64);
-        let prompt_tokens = usage.map(|u| u.prompt_tokens as i32);
-        let completion_tokens = usage.map(|u| u.completion_tokens as i32);
+        // part after `@` in a `name@version` reference (None for bare names or a
+        // trailing `@`). Latency/usage are `None` on cache hits. Conversions are
+        // fallible to avoid silent wraparound on absurd values.
+        let schema_version = schema_name
+            .rsplit_once('@')
+            .map(|(_, v)| v.to_string())
+            .filter(|v| !v.is_empty());
+        let latency_ms_i64 = latency_ms.and_then(|l| i64::try_from(l).ok());
+        let prompt_tokens = usage.and_then(|u| i32::try_from(u.prompt_tokens).ok());
+        let completion_tokens = usage.and_then(|u| i32::try_from(u.completion_tokens).ok());
 
         // 5 & 6. Compare + Persist
         let (changed, extraction_id) = if let Some(store) = &self.store {
@@ -662,6 +666,26 @@ mod tests {
         assert_eq!(saved[0].schema_version, None);
         // Default provider when none is set.
         assert_eq!(saved[0].provider, "openai");
+    }
+
+    #[tokio::test]
+    async fn schema_version_none_for_trailing_at() {
+        // A trailing `@` (e.g. user typed `blog@`) yields an empty suffix, which
+        // must be normalized to None rather than persisted as Some("").
+        let store = MockStore::empty();
+        let svc = ScrapeService::with_store(
+            MockFetcher::new("<html>hi</html>"),
+            MockCleaner::passthrough(),
+            MockExtractor::new(serde_json::json!({"title": "Hello"})),
+            store.clone(),
+            "test-model".into(),
+        );
+
+        svc.scrape("https://example.com", &test_schema(), "blog@")
+            .await
+            .unwrap();
+
+        assert_eq!(store.saved.lock().unwrap()[0].schema_version, None);
     }
 
     // -----------------------------------------------------------------------

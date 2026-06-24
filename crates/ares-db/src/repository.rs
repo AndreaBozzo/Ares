@@ -56,7 +56,7 @@ impl ExtractionRepository {
                    provider, schema_version, latency_ms, prompt_tokens, completion_tokens, created_at
             FROM extractions
             WHERE url = $1 AND schema_name = $2
-            ORDER BY created_at DESC
+            ORDER BY created_at DESC, id DESC
             LIMIT 1
             "#,
         )
