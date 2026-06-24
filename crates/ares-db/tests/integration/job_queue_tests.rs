@@ -99,6 +99,7 @@ async fn complete_job_sets_completed_status() {
         raw_content_hash: "hash".into(),
         data_hash: "dhash".into(),
         model: "model".into(),
+        ..Default::default()
     };
     let extraction_id = extraction_repo.save(&extraction).await.unwrap();
 

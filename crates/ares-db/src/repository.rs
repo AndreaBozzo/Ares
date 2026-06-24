@@ -19,8 +19,10 @@ impl ExtractionRepository {
     pub async fn save(&self, extraction: &NewExtraction) -> Result<Uuid, AppError> {
         let row: (Uuid,) = sqlx::query_as(
             r#"
-            INSERT INTO extractions (url, schema_name, extracted_data, raw_content_hash, data_hash, model)
-            VALUES ($1, $2, $3, $4, $5, $6)
+            INSERT INTO extractions
+                (url, schema_name, extracted_data, raw_content_hash, data_hash, model,
+                 provider, schema_version, latency_ms, prompt_tokens, completion_tokens)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
             RETURNING id
             "#,
         )
@@ -30,6 +32,11 @@ impl ExtractionRepository {
         .bind(&extraction.raw_content_hash)
         .bind(&extraction.data_hash)
         .bind(&extraction.model)
+        .bind(&extraction.provider)
+        .bind(&extraction.schema_version)
+        .bind(extraction.latency_ms)
+        .bind(extraction.prompt_tokens)
+        .bind(extraction.completion_tokens)
         .fetch_one(&self.pool)
         .await
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
@@ -45,10 +52,11 @@ impl ExtractionRepository {
     ) -> Result<Option<Extraction>, AppError> {
         let row = sqlx::query_as::<_, ExtractionRow>(
             r#"
-            SELECT id, url, schema_name, extracted_data, raw_content_hash, data_hash, model, created_at
+            SELECT id, url, schema_name, extracted_data, raw_content_hash, data_hash, model,
+                   provider, schema_version, latency_ms, prompt_tokens, completion_tokens, created_at
             FROM extractions
             WHERE url = $1 AND schema_name = $2
-            ORDER BY created_at DESC
+            ORDER BY created_at DESC, id DESC
             LIMIT 1
             "#,
         )
@@ -71,7 +79,8 @@ impl ExtractionRepository {
     ) -> Result<Vec<Extraction>, AppError> {
         let rows = sqlx::query_as::<_, ExtractionRow>(
             r#"
-            SELECT id, url, schema_name, extracted_data, raw_content_hash, data_hash, model, created_at
+            SELECT id, url, schema_name, extracted_data, raw_content_hash, data_hash, model,
+                   provider, schema_version, latency_ms, prompt_tokens, completion_tokens, created_at
             FROM extractions
             WHERE url = $1 AND schema_name = $2
             ORDER BY created_at DESC, id DESC
@@ -119,7 +128,8 @@ impl ExtractionRepository {
     ) -> Result<Vec<Extraction>, AppError> {
         let rows = sqlx::query_as::<_, ExtractionRow>(
             r#"
-            SELECT e.id, e.url, e.schema_name, e.extracted_data, e.raw_content_hash, e.data_hash, e.model, e.created_at
+            SELECT e.id, e.url, e.schema_name, e.extracted_data, e.raw_content_hash, e.data_hash, e.model,
+                   e.provider, e.schema_version, e.latency_ms, e.prompt_tokens, e.completion_tokens, e.created_at
             FROM extractions e
             JOIN scrape_jobs j ON e.id = j.extraction_id
             WHERE j.crawl_session_id = $1
@@ -146,6 +156,11 @@ struct ExtractionRow {
     raw_content_hash: String,
     data_hash: String,
     model: String,
+    provider: String,
+    schema_version: Option<String>,
+    latency_ms: Option<i64>,
+    prompt_tokens: Option<i32>,
+    completion_tokens: Option<i32>,
     created_at: DateTime<Utc>,
 }
 
@@ -159,6 +174,11 @@ impl From<ExtractionRow> for Extraction {
             content_hash: row.raw_content_hash,
             data_hash: row.data_hash,
             model: row.model,
+            provider: row.provider,
+            schema_version: row.schema_version,
+            latency_ms: row.latency_ms,
+            prompt_tokens: row.prompt_tokens,
+            completion_tokens: row.completion_tokens,
             created_at: row.created_at,
         }
     }

@@ -85,10 +85,24 @@ pub struct Extraction {
     /// SHA-256 of the extracted JSON data (for change detection)
     pub data_hash: String,
     pub model: String,
+    // -- Run metadata --
+    /// LLM provider used (e.g. `openai`, `anthropic`, `local`).
+    pub provider: String,
+    /// Schema version, when known (parsed from a `name@version` reference).
+    pub schema_version: Option<String>,
+    /// Extractor-call latency in ms. `None` for cache-served results.
+    pub latency_ms: Option<i64>,
+    /// Prompt/completion tokens reported by the provider. `None` for local
+    /// backends or cache hits.
+    pub prompt_tokens: Option<i32>,
+    pub completion_tokens: Option<i32>,
     pub created_at: DateTime<Utc>,
 }
 
 /// DTO for inserting a new extraction into the database.
+///
+/// `Default` is provided so tests can set only the fields they care about
+/// (`..Default::default()`); the pipeline always sets every field explicitly.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct NewExtraction {
     pub url: String,
@@ -97,6 +111,32 @@ pub struct NewExtraction {
     pub raw_content_hash: String,
     pub data_hash: String,
     pub model: String,
+    // -- Run metadata (see `Extraction`) --
+    pub provider: String,
+    pub schema_version: Option<String>,
+    pub latency_ms: Option<i64>,
+    pub prompt_tokens: Option<i32>,
+    pub completion_tokens: Option<i32>,
+}
+
+impl Default for NewExtraction {
+    fn default() -> Self {
+        Self {
+            url: String::new(),
+            schema_name: String::new(),
+            extracted_data: serde_json::Value::Null,
+            raw_content_hash: String::new(),
+            data_hash: String::new(),
+            model: String::new(),
+            // Canonical default provider (matches the DB column default and
+            // `ScrapeService`), so `..Default::default()` never persists "".
+            provider: "openai".to_string(),
+            schema_version: None,
+            latency_ms: None,
+            prompt_tokens: None,
+            completion_tokens: None,
+        }
+    }
 }
 
 /// Result of a scrape pipeline execution.

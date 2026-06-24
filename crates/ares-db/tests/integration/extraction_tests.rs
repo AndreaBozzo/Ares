@@ -15,6 +15,11 @@ async fn save_and_retrieve_extraction() {
         raw_content_hash: "abc123".repeat(10),
         data_hash: "def456".repeat(10),
         model: "gpt-4o-mini".into(),
+        provider: "anthropic".into(),
+        schema_version: Some("1.0.0".into()),
+        latency_ms: Some(1234),
+        prompt_tokens: Some(900),
+        completion_tokens: Some(42),
     };
 
     let id = repo.save(&extraction).await.unwrap();
@@ -34,6 +39,13 @@ async fn save_and_retrieve_extraction() {
         serde_json::json!({"title": "Hello World"})
     );
     assert_eq!(latest.model, "gpt-4o-mini");
+
+    // Run metadata round-trips.
+    assert_eq!(latest.provider, "anthropic");
+    assert_eq!(latest.schema_version.as_deref(), Some("1.0.0"));
+    assert_eq!(latest.latency_ms, Some(1234));
+    assert_eq!(latest.prompt_tokens, Some(900));
+    assert_eq!(latest.completion_tokens, Some(42));
 }
 
 #[tokio::test]
@@ -49,6 +61,7 @@ async fn get_latest_returns_most_recent() {
         raw_content_hash: "hash1".into(),
         data_hash: "dhash1".into(),
         model: "model-a".into(),
+        ..Default::default()
     };
     let _id1 = repo.save(&e1).await.unwrap();
 
@@ -62,6 +75,7 @@ async fn get_latest_returns_most_recent() {
         raw_content_hash: "hash2".into(),
         data_hash: "dhash2".into(),
         model: "model-b".into(),
+        ..Default::default()
     };
     let id2 = repo.save(&e2).await.unwrap();
 
@@ -104,6 +118,7 @@ async fn get_history_returns_ordered_with_limit() {
             raw_content_hash: format!("chash{i}"),
             data_hash: format!("dhash{i}"),
             model: "model".into(),
+            ..Default::default()
         };
         repo.save(&e).await.unwrap();
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;

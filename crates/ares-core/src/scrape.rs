@@ -21,6 +21,7 @@ where
     extractor: E,
     store: Option<S>,
     model_name: String,
+    provider: String,
     skip_unchanged: bool,
     validate: bool,
     max_content_chars: Option<usize>,
@@ -43,6 +44,7 @@ where
             extractor,
             store: None,
             model_name,
+            provider: "openai".to_string(),
             skip_unchanged: false,
             validate: true,
             max_content_chars: None,
@@ -59,6 +61,7 @@ where
             extractor,
             store: Some(store),
             model_name,
+            provider: "openai".to_string(),
             skip_unchanged: false,
             validate: true,
             max_content_chars: None,
@@ -70,6 +73,13 @@ where
     /// When enabled, skip saving if the data hash matches the previous extraction.
     pub fn with_skip_unchanged(mut self, skip: bool) -> Self {
         self.skip_unchanged = skip;
+        self
+    }
+
+    /// Set the provider name recorded in extraction run metadata (e.g.
+    /// `openai`, `anthropic`, `local`). Defaults to `openai`.
+    pub fn with_provider(mut self, provider: impl Into<String>) -> Self {
+        self.provider = provider.into();
         self
     }
 
@@ -231,6 +241,18 @@ where
             "Extraction complete"
         );
 
+        // Run metadata recorded alongside the extraction. Schema version is the
+        // part after `@` in a `name@version` reference (None for bare names or a
+        // trailing `@`). Latency/usage are `None` on cache hits. Conversions are
+        // fallible to avoid silent wraparound on absurd values.
+        let schema_version = schema_name
+            .rsplit_once('@')
+            .map(|(_, v)| v.to_string())
+            .filter(|v| !v.is_empty());
+        let latency_ms_i64 = latency_ms.and_then(|l| i64::try_from(l).ok());
+        let prompt_tokens = usage.and_then(|u| i32::try_from(u.prompt_tokens).ok());
+        let completion_tokens = usage.and_then(|u| i32::try_from(u.completion_tokens).ok());
+
         // 5 & 6. Compare + Persist
         let (changed, extraction_id) = if let Some(store) = &self.store {
             let previous = store.get_latest(url, schema_name).await?;
@@ -251,6 +273,11 @@ where
                     raw_content_hash: content_hash.clone(),
                     data_hash: data_hash.clone(),
                     model: self.model_name.clone(),
+                    provider: self.provider.clone(),
+                    schema_version: schema_version.clone(),
+                    latency_ms: latency_ms_i64,
+                    prompt_tokens,
+                    completion_tokens,
                 };
 
                 let id = store.save(&new_extraction).await?;
@@ -584,6 +611,81 @@ mod tests {
             .unwrap();
 
         assert_eq!(result.extracted_data, extracted);
+    }
+
+    // -----------------------------------------------------------------------
+    // Run-metadata tests
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn populates_run_metadata_on_save() {
+        let store = MockStore::empty();
+        let svc = ScrapeService::with_store(
+            MockFetcher::new("<html>hello</html>"),
+            MockCleaner::passthrough(),
+            MockExtractor::new(serde_json::json!({"title": "Hello"})),
+            store.clone(),
+            "claude-haiku-4-5".into(),
+        )
+        .with_provider("anthropic");
+
+        svc.scrape("https://example.com", &test_schema(), "blog@1.0.0")
+            .await
+            .unwrap();
+
+        let saved = store.saved.lock().unwrap();
+        assert_eq!(saved.len(), 1);
+        let ne = &saved[0];
+        assert_eq!(ne.provider, "anthropic");
+        assert_eq!(ne.model, "claude-haiku-4-5");
+        // schema_version is parsed from the `name@version` schema_name.
+        assert_eq!(ne.schema_version.as_deref(), Some("1.0.0"));
+        // A real extractor call records latency.
+        assert!(ne.latency_ms.is_some());
+        // MockExtractor reports no usage → token counts are None.
+        assert!(ne.prompt_tokens.is_none());
+        assert!(ne.completion_tokens.is_none());
+    }
+
+    #[tokio::test]
+    async fn schema_version_is_none_for_bare_schema_name() {
+        let store = MockStore::empty();
+        let svc = ScrapeService::with_store(
+            MockFetcher::new("<html>hello</html>"),
+            MockCleaner::passthrough(),
+            MockExtractor::new(serde_json::json!({"title": "Hello"})),
+            store.clone(),
+            "test-model".into(),
+        );
+
+        svc.scrape("https://example.com", &test_schema(), "blog")
+            .await
+            .unwrap();
+
+        let saved = store.saved.lock().unwrap();
+        assert_eq!(saved[0].schema_version, None);
+        // Default provider when none is set.
+        assert_eq!(saved[0].provider, "openai");
+    }
+
+    #[tokio::test]
+    async fn schema_version_none_for_trailing_at() {
+        // A trailing `@` (e.g. user typed `blog@`) yields an empty suffix, which
+        // must be normalized to None rather than persisted as Some("").
+        let store = MockStore::empty();
+        let svc = ScrapeService::with_store(
+            MockFetcher::new("<html>hi</html>"),
+            MockCleaner::passthrough(),
+            MockExtractor::new(serde_json::json!({"title": "Hello"})),
+            store.clone(),
+            "test-model".into(),
+        );
+
+        svc.scrape("https://example.com", &test_schema(), "blog@")
+            .await
+            .unwrap();
+
+        assert_eq!(store.saved.lock().unwrap()[0].schema_version, None);
     }
 
     // -----------------------------------------------------------------------

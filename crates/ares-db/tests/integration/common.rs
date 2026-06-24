@@ -69,6 +69,13 @@ const MIGRATIONS: &[&str] = &[
     r#"ALTER TABLE scrape_jobs
        ADD COLUMN IF NOT EXISTS max_pages INTEGER NOT NULL DEFAULT 100,
        ADD COLUMN IF NOT EXISTS allowed_domains JSONB NOT NULL DEFAULT '[]'"#,
+    // 004_extraction_metadata.sql
+    r#"ALTER TABLE extractions
+       ADD COLUMN IF NOT EXISTS provider          VARCHAR(50) NOT NULL DEFAULT 'openai',
+       ADD COLUMN IF NOT EXISTS schema_version    VARCHAR(50),
+       ADD COLUMN IF NOT EXISTS latency_ms        BIGINT,
+       ADD COLUMN IF NOT EXISTS prompt_tokens     INTEGER,
+       ADD COLUMN IF NOT EXISTS completion_tokens INTEGER"#,
 ];
 
 /// Spins up a PostgreSQL container and returns a connected pool.

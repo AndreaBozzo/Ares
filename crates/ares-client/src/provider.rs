@@ -52,6 +52,16 @@ impl Provider {
         }
     }
 
+    /// The canonical lowercase name of this provider, as recorded in extraction
+    /// run metadata and accepted by [`Provider::parse`].
+    pub fn name(&self) -> &'static str {
+        match self {
+            Provider::OpenAi => "openai",
+            Provider::Anthropic => "anthropic",
+            Provider::Local => "local",
+        }
+    }
+
     /// The default API base URL for this provider (used when none is supplied).
     pub fn default_base_url(&self) -> &'static str {
         match self {
@@ -127,6 +137,19 @@ impl ProviderExtractor {
                     Err(AppError::ConfigError(LOCAL_LLM_FEATURE_MSG.to_string()))
                 }
             }
+        }
+    }
+}
+
+impl ProviderExtractor {
+    /// The provider name for this extractor, for recording in run metadata.
+    pub fn provider_name(&self) -> &'static str {
+        match self {
+            ProviderExtractor::OpenAi(_) => "openai",
+            #[cfg(feature = "anthropic")]
+            ProviderExtractor::Anthropic(_) => "anthropic",
+            #[cfg(feature = "local-llm")]
+            ProviderExtractor::Local(_) => "local",
         }
     }
 }
