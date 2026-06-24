@@ -15,6 +15,7 @@
 use std::time::Duration;
 
 use ares_core::error::AppError;
+use ares_core::models::{ExtractionOutcome, Usage};
 use ares_core::traits::{Extractor, ExtractorFactory};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -165,6 +166,17 @@ struct Message {
 struct MessagesResponse {
     #[serde(default)]
     content: Vec<ContentBlock>,
+    #[serde(default)]
+    usage: Option<ApiUsage>,
+}
+
+/// Anthropic Messages API usage block (`input_tokens` / `output_tokens`).
+#[derive(Deserialize)]
+struct ApiUsage {
+    #[serde(default)]
+    input_tokens: u32,
+    #[serde(default)]
+    output_tokens: u32,
 }
 
 #[derive(Deserialize)]
@@ -185,10 +197,11 @@ struct ApiErrorDetail {
     message: String,
 }
 
-/// Extract the forced-tool result from a Messages API response body.
+/// Extract the forced-tool result (and token usage) from a Messages API
+/// response body.
 ///
 /// Pure function (no HTTP) so it can be unit-tested against recorded responses.
-fn parse_extraction(body: &str) -> Result<serde_json::Value, AppError> {
+fn parse_extraction(body: &str) -> Result<ExtractionOutcome, AppError> {
     let response: MessagesResponse = serde_json::from_str(body).map_err(|e| {
         AppError::HttpError(format!(
             "Failed to parse Anthropic response: {e}. Raw: {}",
@@ -196,7 +209,15 @@ fn parse_extraction(body: &str) -> Result<serde_json::Value, AppError> {
         ))
     })?;
 
-    response
+    // A present-but-all-zero usage block means "not reported" — don't surface a
+    // misleading Usage { 0, 0 }.
+    let usage = response
+        .usage
+        .as_ref()
+        .map(|u| Usage::new(u.input_tokens, u.output_tokens))
+        .filter(|u| u.total_tokens() > 0);
+
+    let value = response
         .content
         .into_iter()
         .find(|b| b.block_type == "tool_use")
@@ -208,7 +229,9 @@ fn parse_extraction(body: &str) -> Result<serde_json::Value, AppError> {
             ),
             status_code: 200,
             retryable: false,
-        })
+        })?;
+
+    Ok(ExtractionOutcome { value, usage })
 }
 
 impl Extractor for AnthropicExtractor {
@@ -216,7 +239,7 @@ impl Extractor for AnthropicExtractor {
         &self,
         content: &str,
         schema: &serde_json::Value,
-    ) -> Result<serde_json::Value, AppError> {
+    ) -> Result<ExtractionOutcome, AppError> {
         let url = format!("{}/messages", self.base_url);
         let request = self.build_request(content, schema);
 
@@ -358,7 +381,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_extraction_returns_tool_input() {
+    fn parse_extraction_returns_tool_input_and_usage() {
         let body = serde_json::json!({
             "id": "msg_1",
             "type": "message",
@@ -366,12 +389,33 @@ mod tests {
             "content": [
                 { "type": "tool_use", "id": "toolu_1", "name": "extract", "input": { "title": "Hello" } }
             ],
-            "stop_reason": "tool_use"
+            "stop_reason": "tool_use",
+            "usage": { "input_tokens": 120, "output_tokens": 8 }
         })
         .to_string();
 
-        let value = parse_extraction(&body).unwrap();
-        assert_eq!(value, serde_json::json!({ "title": "Hello" }));
+        let outcome = parse_extraction(&body).unwrap();
+        assert_eq!(outcome.value, serde_json::json!({ "title": "Hello" }));
+        let usage = outcome.usage.expect("usage present");
+        assert_eq!(usage.prompt_tokens, 120);
+        assert_eq!(usage.completion_tokens, 8);
+    }
+
+    #[test]
+    fn parse_extraction_treats_zero_usage_as_none() {
+        // A present-but-all-zero usage block must be reported as "unknown" (None),
+        // not Usage { 0, 0 }.
+        let body = serde_json::json!({
+            "content": [
+                { "type": "tool_use", "name": "extract", "input": { "title": "Hi" } }
+            ],
+            "usage": { "input_tokens": 0, "output_tokens": 0 }
+        })
+        .to_string();
+
+        let outcome = parse_extraction(&body).unwrap();
+        assert_eq!(outcome.value, serde_json::json!({ "title": "Hi" }));
+        assert!(outcome.usage.is_none());
     }
 
     #[test]
@@ -385,10 +429,10 @@ mod tests {
         })
         .to_string();
 
-        assert_eq!(
-            parse_extraction(&body).unwrap(),
-            serde_json::json!({ "title": "Hi" })
-        );
+        let outcome = parse_extraction(&body).unwrap();
+        assert_eq!(outcome.value, serde_json::json!({ "title": "Hi" }));
+        // No usage block in this response → None.
+        assert!(outcome.usage.is_none());
     }
 
     #[test]

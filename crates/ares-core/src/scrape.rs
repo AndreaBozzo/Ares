@@ -170,31 +170,37 @@ where
         let content_hash = compute_hash(&markdown);
         let schema_hash = compute_hash(&schema.to_string());
 
-        // 4. Extract (with optional extraction cache)
-        let extracted = if let Some(cache) = &self.extraction_cache {
+        // 4. Extract (with optional extraction cache). Latency and token usage
+        // are captured only on a real LLM call; cache hits report neither.
+        let (extracted, latency_ms, usage) = if let Some(cache) = &self.extraction_cache {
             if let Some(cached) = cache
                 .get(&content_hash, schema_name, &schema_hash, &self.model_name)
                 .await
             {
                 tracing::info!("Using cached extraction for model {}", self.model_name);
-                cached
+                (cached, None, None)
             } else {
                 tracing::info!("Extracting with model {} ...", self.model_name);
-                let data = self.extractor.extract(&markdown, schema).await?;
+                let started = std::time::Instant::now();
+                let outcome = self.extractor.extract(&markdown, schema).await?;
+                let latency_ms = started.elapsed().as_millis();
                 cache
                     .insert(
                         &content_hash,
                         schema_name,
                         &schema_hash,
                         &self.model_name,
-                        data.clone(),
+                        outcome.value.clone(),
                     )
                     .await;
-                data
+                (outcome.value, Some(latency_ms), outcome.usage)
             }
         } else {
             tracing::info!("Extracting with model {} ...", self.model_name);
-            self.extractor.extract(&markdown, schema).await?
+            let started = std::time::Instant::now();
+            let outcome = self.extractor.extract(&markdown, schema).await?;
+            let latency_ms = started.elapsed().as_millis();
+            (outcome.value, Some(latency_ms), outcome.usage)
         };
 
         // 4b. Validate extracted output against the schema before hashing/saving.
@@ -220,6 +226,8 @@ where
         tracing::info!(
             content_hash = %&content_hash[..8],
             data_hash = %&data_hash[..8],
+            latency_ms = ?latency_ms,
+            usage = ?usage,
             "Extraction complete"
         );
 
@@ -269,6 +277,8 @@ where
             data_hash,
             changed,
             extraction_id,
+            latency_ms,
+            usage,
             raw_html: Some(html),
         })
     }
@@ -619,6 +629,11 @@ mod tests {
         assert_eq!(r2.extracted_data, extracted);
         // Same content means same content hash
         assert_eq!(r1.content_hash, r2.content_hash);
+
+        // Real extractor call records latency; the cached second run reports none.
+        assert!(r1.latency_ms.is_some());
+        assert!(r2.latency_ms.is_none(), "cache hit must not report latency");
+        assert!(r2.usage.is_none(), "cache hit must not report usage");
     }
 
     #[tokio::test]
@@ -654,6 +669,10 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(r2.extracted_data, extracted);
+
+        // Extraction cache hit on the second run → no latency recorded.
+        assert!(r1.latency_ms.is_some());
+        assert!(r2.latency_ms.is_none(), "cache hit must not report latency");
     }
 
     #[tokio::test]
@@ -685,5 +704,9 @@ mod tests {
             .unwrap();
         // Different extraction because no cache — fetcher returned different HTML
         assert_eq!(r2.extracted_data, serde_json::json!({"title": "World"}));
+
+        // Both runs hit the real extractor → both record latency.
+        assert!(r1.latency_ms.is_some());
+        assert!(r2.latency_ms.is_some());
     }
 }

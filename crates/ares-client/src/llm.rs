@@ -1,6 +1,7 @@
 use std::time::Duration;
 
 use ares_core::error::AppError;
+use ares_core::models::{ExtractionOutcome, Usage};
 use ares_core::traits::{Extractor, ExtractorFactory};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -100,6 +101,17 @@ struct JsonSchemaWrapper {
 #[derive(Deserialize)]
 struct ChatResponse {
     choices: Vec<Choice>,
+    #[serde(default)]
+    usage: Option<ApiUsage>,
+}
+
+/// OpenAI-style usage block. Optional because some compatible servers omit it.
+#[derive(Deserialize)]
+struct ApiUsage {
+    #[serde(default)]
+    prompt_tokens: u32,
+    #[serde(default)]
+    completion_tokens: u32,
 }
 
 #[derive(Deserialize)]
@@ -127,7 +139,7 @@ impl Extractor for OpenAiExtractor {
         &self,
         content: &str,
         schema: &serde_json::Value,
-    ) -> Result<serde_json::Value, AppError> {
+    ) -> Result<ExtractionOutcome, AppError> {
         let url = format!("{}/chat/completions", self.base_url);
 
         let request = ChatRequest {
@@ -200,6 +212,15 @@ impl Extractor for OpenAiExtractor {
             .await
             .map_err(|e| AppError::HttpError(format!("Failed to parse LLM response: {e}")))?;
 
+        // Treat a present-but-all-zero usage block as "not reported" rather than
+        // surfacing a misleading Usage { 0, 0 } (some OpenAI-compatible servers
+        // include the object but omit the counts).
+        let usage = chat_response
+            .usage
+            .as_ref()
+            .map(|u| Usage::new(u.prompt_tokens, u.completion_tokens))
+            .filter(|u| u.total_tokens() > 0);
+
         let content_str = chat_response
             .choices
             .first()
@@ -210,12 +231,14 @@ impl Extractor for OpenAiExtractor {
                 retryable: false,
             })?;
 
-        serde_json::from_str(content_str).map_err(|e| {
+        let value: serde_json::Value = serde_json::from_str(content_str).map_err(|e| {
             AppError::SchemaValidationError(format!(
                 "LLM returned invalid JSON: {e}. Raw: {}",
                 truncate_for_error(content_str)
             ))
-        })
+        })?;
+
+        Ok(ExtractionOutcome { value, usage })
     }
 }
 
