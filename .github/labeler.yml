@@ -1,0 +1,40 @@
+area/core:
+  - changed-files:
+      - any-glob-to-any-file: 'crates/ares-core/**'
+
+area/database:
+  - changed-files:
+      - any-glob-to-any-file: 'crates/ares-db/**'
+
+area/fetcher:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'crates/ares-client/src/fetcher.rs'
+          - 'crates/ares-client/src/browser_fetcher.rs'
+          - 'crates/ares-client/src/robots.rs'
+          - 'crates/ares-client/src/user_agent.rs'
+          - 'crates/ares-client/src/link_discovery.rs'
+
+area/llm:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'crates/ares-client/src/llm.rs'
+          - 'crates/ares-client/src/anthropic.rs'
+          - 'crates/ares-client/src/candle.rs'
+          - 'crates/ares-client/src/provider.rs'
+
+type/docs:
+  - changed-files:
+      - any-glob-to-any-file:
+          - '**/*.md'
+          - 'docs/**'
+
+dependencies:
+  - changed-files:
+      - any-glob-to-any-file:
+          - '**/Cargo.toml'
+          - 'Cargo.lock'
+
+rust:
+  - changed-files:
+      - any-glob-to-any-file: '**/*.rs'
