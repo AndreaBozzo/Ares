@@ -4,9 +4,7 @@ area/core:
 
 area/database:
   - changed-files:
-      - any-glob-to-any-file:
-          - 'crates/ares-db/**'
-          - 'crates/ares-db/migrations/**'
+      - any-glob-to-any-file: 'crates/ares-db/**'
 
 area/fetcher:
   - changed-files:
@@ -15,6 +13,7 @@ area/fetcher:
           - 'crates/ares-client/src/browser_fetcher.rs'
           - 'crates/ares-client/src/robots.rs'
           - 'crates/ares-client/src/user_agent.rs'
+          - 'crates/ares-client/src/link_discovery.rs'
 
 area/llm:
   - changed-files:
@@ -35,3 +34,7 @@ dependencies:
       - any-glob-to-any-file:
           - '**/Cargo.toml'
           - 'Cargo.lock'
+
+rust:
+  - changed-files:
+      - any-glob-to-any-file: '**/*.rs'
